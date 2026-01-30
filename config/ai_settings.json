@@ -1,0 +1,4 @@
+{
+    "provider": "google",
+    "model": "gemini/gemma-3-12b-it"
+}

@@ -1,0 +1,141 @@
+=== METASPLOIT MODULE KNOWLEDGE BASE ===
+
+[SERVICE: SSH]
+BANNER PATTERNS: "SSH-2.0-OpenSSH", "dropbear", "libssh"
+RECOMMENDED ACTION: Enumeration / Credential Testing
+PRIMARY MODULE: auxiliary/scanner/ssh/ssh_version
+SECONDARY MODULE: auxiliary/scanner/ssh/ssh_login
+SPECIFIC CVEs:
+- If banner contains "libssh 0.6" to "0.8": auxiliary/scanner/ssh/libssh_auth_bypass
+NOTES: SSH rarely has direct RCE. Prefer version detection, user enumeration, and credential attacks.
+
+[SERVICE: FTP]
+BANNER PATTERNS: "vsFTPd", "ProFTPD", "Pure-FTPd", "FileZilla Server", "220"
+RECOMMENDED ACTION: Anonymous Check -> Brute Force -> Exploit
+PRIMARY MODULE: auxiliary/scanner/ftp/anonymous
+SECONDARY MODULE: auxiliary/scanner/ftp/ftp_login
+SPECIFIC CVEs:
+- If banner contains "vsFTPd 2.3.4": exploit/unix/ftp/vsftpd_234_backdoor
+- If banner contains "ProFTPD 1.3.3c": exploit/unix/ftp/proftpd_133c_backdoor
+- If banner contains "ProFTPD mod_copy": exploit/unix/ftp/proftpd_modcopy_exec
+NOTES: Always attempt anonymous login before brute force or exploit.
+
+[SERVICE: HTTP / WEB]
+BANNER PATTERNS: "Apache", "nginx", "IIS", "Jetty", "Coyote", "Node.js", "PHP", "Python", "Ruby"
+RECOMMENDED ACTION: Enumeration & Fingerprinting
+PRIMARY MODULE: auxiliary/scanner/http/http_version
+SECONDARY MODULES:
+- auxiliary/scanner/http/title
+- auxiliary/scanner/http/headers
+- auxiliary/scanner/http/dir_scanner
+SPECIFIC PLATFORMS:
+- If "Apache Tomcat": auxiliary/scanner/http/tomcat_mgr_login -> exploit/multi/http/tomcat_mgr_upload
+- If "Jenkins": exploit/linux/http/jenkins_script_console
+- If "WebDAV": auxiliary/scanner/http/webdav_scanner
+- If "Struts": exploit/multi/http/struts2_content_type_ognl
+NOTES: Do NOT assume CMS or framework unless explicitly identified.
+
+[SERVICE: HTTPS / SSL]
+BANNER PATTERNS: "SSL", "TLS", "443"
+RECOMMENDED ACTION: Certificate & Cipher Analysis
+PRIMARY MODULE: auxiliary/scanner/ssl/ssl_version
+SECONDARY MODULE: auxiliary/scanner/ssl/openssl_heartbleed
+SPECIFIC CVEs:
+- If OpenSSL vulnerable: auxiliary/scanner/ssl/openssl_heartbleed
+NOTES: SSL itself is not exploitable; focus on underlying services.
+
+[SERVICE: MYSQL / MARIADB]
+BANNER PATTERNS: "MySQL", "MariaDB", "unauthorized", "Access denied"
+RECOMMENDED ACTION: Credential Testing
+PRIMARY MODULE: auxiliary/scanner/mysql/mysql_login
+POST-AUTH MODULE:
+- exploit/linux/mysql/mysql_udf_payload
+NOTES: Exploitation requires credentials. Prefer weak/default passwords.
+
+[SERVICE: POSTGRESQL]
+BANNER PATTERNS: "PostgreSQL"
+RECOMMENDED ACTION: Credential Testing
+PRIMARY MODULE: auxiliary/scanner/postgres/postgres_login
+POST-AUTH MODULE:
+- exploit/linux/postgres/postgres_payload
+NOTES: Exploits require authenticated access.
+
+[SERVICE: SMB / NETBIOS]
+BANNER PATTERNS: "Samba", "Microsoft-DS", "SMB", "Workgroup"
+RECOMMENDED ACTION: Version Detection -> Vulnerability Scan
+PRIMARY MODULE: auxiliary/scanner/smb/smb_version
+SECONDARY MODULES:
+- auxiliary/scanner/smb/smb_enumshares
+- auxiliary/scanner/smb/smb_login
+SPECIFIC CVEs:
+- If Windows + SMBv1: auxiliary/scanner/smb/smb_ms17_010 -> exploit/windows/smb/ms17_010_eternalblue
+- If Samba 3.0.20: exploit/multi/samba/usermap_script
+- If Samba 3.5.0-4.6.4: exploit/linux/samba/is_known_pipename
+NOTES: SMB is high-value. Always fingerprint OS and version.
+
+[SERVICE: TELNET]
+BANNER PATTERNS: "Telnet", "23"
+RECOMMENDED ACTION: Credential Testing
+PRIMARY MODULE: auxiliary/scanner/telnet/telnet_login
+NOTES: Telnet transmits credentials in cleartext. Very high risk.
+
+[SERVICE: SMTP]
+BANNER PATTERNS: "ESMTP", "Postfix", "Sendmail", "Exim"
+RECOMMENDED ACTION: Enumeration
+PRIMARY MODULE: auxiliary/scanner/smtp/smtp_enum
+SPECIFIC CVEs:
+- If Exim vulnerable: exploit/linux/smtp/exim4_deliver_message
+NOTES: Focus on user enumeration and version-specific exploits.
+
+[SERVICE: IRC]
+BANNER PATTERNS: "UnrealIRCd", "ircd", "NOTICE AUTH"
+RECOMMENDED ACTION: Backdoor Check
+PRIMARY MODULE: auxiliary/scanner/misc/irc_version
+SPECIFIC CVEs:
+- If "UnrealIRCd 3.2.8.1": exploit/unix/irc/unreal_ircd_3281_backdoor
+NOTES: IRC daemons in labs often include backdoors.
+
+[SERVICE: JAVA RMI]
+BANNER PATTERNS: "RMI", "rmiregistry", "1099"
+RECOMMENDED ACTION: Exploit
+PRIMARY MODULE: exploit/multi/misc/java_rmi_server
+NOTES: Java RMI often allows unauthenticated code execution.
+
+[SERVICE: VNC]
+BANNER PATTERNS: "RFB", "VNC"
+RECOMMENDED ACTION: Authentication Check
+PRIMARY MODULE: auxiliary/scanner/vnc/vnc_none_auth
+SECONDARY MODULE: auxiliary/scanner/vnc/vnc_login
+NOTES: Always test for no-auth before brute force.
+
+[SERVICE: DISTCC]
+BANNER PATTERNS: "distccd"
+RECOMMENDED ACTION: Exploit
+PRIMARY MODULE: exploit/unix/misc/distcc_exec
+NOTES: Often allows unauthenticated RCE.
+
+[SERVICE: NFS]
+BANNER PATTERNS: "nfs", "rpcbind", "mountd"
+RECOMMENDED ACTION: Enumeration
+PRIMARY MODULE: auxiliary/scanner/nfs/nfsmount
+NOTES: Mounted shares may allow file read/write without auth.
+
+[SERVICE: RDP]
+BANNER PATTERNS: "RDP", "3389"
+RECOMMENDED ACTION: Enumeration
+PRIMARY MODULE: auxiliary/scanner/rdp/rdp_scanner
+SPECIFIC CVEs:
+- If vulnerable: exploit/windows/rdp/cve_2019_0708_bluekeep
+NOTES: Only exploit when version is confirmed vulnerable.
+
+[SERVICE: LDAP]
+BANNER PATTERNS: "LDAP", "389"
+RECOMMENDED ACTION: Enumeration
+PRIMARY MODULE: auxiliary/scanner/ldap/ldap_search
+NOTES: Focus on anonymous binds and information disclosure.
+
+[SERVICE: SNMP]
+BANNER PATTERNS: "SNMP", "161"
+RECOMMENDED ACTION: Enumeration
+PRIMARY MODULE: auxiliary/scanner/snmp/snmp_enum
+NOTES: SNMP often leaks credentials and network topology.

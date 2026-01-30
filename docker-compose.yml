@@ -1,0 +1,89 @@
+version: '3.8'
+
+networks:
+  llm-rag_labnet:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 192.168.70.0/24
+
+services:
+  core:
+    build: 
+      context: .
+      dockerfile: ./core/Dockerfile
+    container_name: core_orchestrator
+    # TRUQUE PARA MANTER O CONTAINER VIVO:
+    command: tail -f /dev/null
+    tty: true
+    stdin_open: true
+    depends_on:
+      - atk
+      - tgt
+      - localai-proxy
+    networks:
+      llm-rag_labnet:
+        ipv4_address: 192.168.70.10
+    volumes:
+      - ./data/vectorstore:/app/data
+      - ./src:/app/src
+      - ./config:/app/config
+    environment:
+      # VARIAVEIS CORRIGIDAS (SEM A BARRA INVERTIDA):
+      LAB_LLM_URL: ${LAB_LLM_URL}
+      CHROMA_PERSIST_DIR: /app/data
+      ATK_RPC_URL: http://192.168.70.20:55553
+      NVD_API_KEY: ${NVD_API_KEY}
+      AUTO_INGEST: "false"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  atk:
+    build: ./atk
+    container_name: metasploit_atk
+    networks:
+      llm-rag_labnet:
+        ipv4_address: 192.168.70.20
+    ports:
+      - "55553:55553"
+
+  tgt:
+    build: ./tgt
+    container_name: vulnerable_tgt
+    tty: true 
+    networks:
+      llm-rag_labnet:
+        ipv4_address: 192.168.70.30
+    ports:
+      - "8081:80"   
+      - "2121:21"   
+      - "2222:22"   
+      - "2323:23"   
+
+  localai-proxy:
+    build: ./llm_proxy
+    container_name: llm_proxy
+    networks:
+      llm-rag_labnet:
+        ipv4_address: 192.168.70.40
+    env_file:
+      - .env
+    volumes:
+      - ./llm_proxy:/app
+      - ./config:/app/config
+
+  mininet:
+    image: containernet/containernet:latest
+    container_name: lab-mininet
+    privileged: true
+    pid: "host"
+    tty: true
+    stdin_open: true
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./labs:/data
+      - /sys/fs/cgroup:/sys/fs/cgroup:ro
+    networks:
+      llm-rag_labnet:
+        ipv4_address: 192.168.70.50
+    entrypoint: ["/bin/bash"]

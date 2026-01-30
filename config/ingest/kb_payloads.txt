@@ -1,0 +1,139 @@
+
+=== METASPLOIT PAYLOAD CARD ===
+NAME: payload/cmd/unix/reverse
+TYPE: payload
+ARCH: x86/x64
+PLATFORM: unix
+KEYWORDS: cmd unix reverse shell reverse bind meterpreter
+DESCRIPTION: Standard reverse shell or meterpreter connection.
+USAGE_NOTE: Use this payload in the 'set PAYLOAD' option of an exploit.
+   - reverse_tcp: Connects back to attacker (Needs LHOST).
+   - bind_tcp: Opens port on target (Good if no firewall).
+   - meterpreter: Advanced payload (upload/download, webcam, etc).
+===============================
+
+
+=== METASPLOIT PAYLOAD CARD ===
+NAME: payload/cmd/unix/reverse_python
+TYPE: payload
+ARCH: x86/x64
+PLATFORM: unix
+KEYWORDS: cmd unix reverse_python shell reverse bind meterpreter
+DESCRIPTION: Standard reverse shell or meterpreter connection.
+USAGE_NOTE: Use this payload in the 'set PAYLOAD' option of an exploit.
+   - reverse_tcp: Connects back to attacker (Needs LHOST).
+   - bind_tcp: Opens port on target (Good if no firewall).
+   - meterpreter: Advanced payload (upload/download, webcam, etc).
+===============================
+
+
+=== METASPLOIT PAYLOAD CARD ===
+NAME: payload/cmd/unix/reverse_bash
+TYPE: payload
+ARCH: x86/x64
+PLATFORM: unix
+KEYWORDS: cmd unix reverse_bash shell reverse bind meterpreter
+DESCRIPTION: Standard reverse shell or meterpreter connection.
+USAGE_NOTE: Use this payload in the 'set PAYLOAD' option of an exploit.
+   - reverse_tcp: Connects back to attacker (Needs LHOST).
+   - bind_tcp: Opens port on target (Good if no firewall).
+   - meterpreter: Advanced payload (upload/download, webcam, etc).
+===============================
+
+
+=== METASPLOIT PAYLOAD CARD ===
+NAME: payload/linux/x86/meterpreter/reverse_tcp
+TYPE: payload
+ARCH: x86/x64
+PLATFORM: linux
+KEYWORDS: linux x86 meterpreter reverse_tcp shell reverse bind meterpreter
+DESCRIPTION: Standard reverse shell or meterpreter connection.
+USAGE_NOTE: Use this payload in the 'set PAYLOAD' option of an exploit.
+   - reverse_tcp: Connects back to attacker (Needs LHOST).
+   - bind_tcp: Opens port on target (Good if no firewall).
+   - meterpreter: Advanced payload (upload/download, webcam, etc).
+===============================
+
+
+=== METASPLOIT PAYLOAD CARD ===
+NAME: payload/linux/x64/shell_reverse_tcp
+TYPE: payload
+ARCH: x86/x64
+PLATFORM: linux
+KEYWORDS: linux x64 shell_reverse_tcp shell reverse bind meterpreter
+DESCRIPTION: Standard reverse shell or meterpreter connection.
+USAGE_NOTE: Use this payload in the 'set PAYLOAD' option of an exploit.
+   - reverse_tcp: Connects back to attacker (Needs LHOST).
+   - bind_tcp: Opens port on target (Good if no firewall).
+   - meterpreter: Advanced payload (upload/download, webcam, etc).
+===============================
+
+
+=== METASPLOIT PAYLOAD CARD ===
+NAME: payload/java/jsp_shell_reverse_tcp
+TYPE: payload
+ARCH: x86/x64
+PLATFORM: java
+KEYWORDS: java jsp_shell_reverse_tcp shell reverse bind meterpreter
+DESCRIPTION: Standard reverse shell or meterpreter connection.
+USAGE_NOTE: Use this payload in the 'set PAYLOAD' option of an exploit.
+   - reverse_tcp: Connects back to attacker (Needs LHOST).
+   - bind_tcp: Opens port on target (Good if no firewall).
+   - meterpreter: Advanced payload (upload/download, webcam, etc).
+===============================
+
+
+=== METASPLOIT PAYLOAD CARD ===
+NAME: payload/php/meterpreter/reverse_tcp
+TYPE: payload
+ARCH: x86/x64
+PLATFORM: php
+KEYWORDS: php meterpreter reverse_tcp shell reverse bind meterpreter
+DESCRIPTION: Standard reverse shell or meterpreter connection.
+USAGE_NOTE: Use this payload in the 'set PAYLOAD' option of an exploit.
+   - reverse_tcp: Connects back to attacker (Needs LHOST).
+   - bind_tcp: Opens port on target (Good if no firewall).
+   - meterpreter: Advanced payload (upload/download, webcam, etc).
+===============================
+
+
+=== METASPLOIT PAYLOAD CARD ===
+NAME: payload/python/meterpreter/reverse_tcp
+TYPE: payload
+ARCH: x86/x64
+PLATFORM: multi
+KEYWORDS: python meterpreter reverse_tcp shell reverse bind meterpreter
+DESCRIPTION: Standard reverse shell or meterpreter connection.
+USAGE_NOTE: Use this payload in the 'set PAYLOAD' option of an exploit.
+   - reverse_tcp: Connects back to attacker (Needs LHOST).
+   - bind_tcp: Opens port on target (Good if no firewall).
+   - meterpreter: Advanced payload (upload/download, webcam, etc).
+===============================
+
+
+=== METASPLOIT PAYLOAD CARD ===
+NAME: payload/windows/meterpreter/reverse_tcp
+TYPE: payload
+ARCH: x86/x64
+PLATFORM: windows
+KEYWORDS: windows meterpreter reverse_tcp shell reverse bind meterpreter
+DESCRIPTION: Standard reverse shell or meterpreter connection.
+USAGE_NOTE: Use this payload in the 'set PAYLOAD' option of an exploit.
+   - reverse_tcp: Connects back to attacker (Needs LHOST).
+   - bind_tcp: Opens port on target (Good if no firewall).
+   - meterpreter: Advanced payload (upload/download, webcam, etc).
+===============================
+
+
+=== METASPLOIT PAYLOAD CARD ===
+NAME: payload/windows/shell/reverse_tcp
+TYPE: payload
+ARCH: x86/x64
+PLATFORM: windows
+KEYWORDS: windows shell reverse_tcp shell reverse bind meterpreter
+DESCRIPTION: Standard reverse shell or meterpreter connection.
+USAGE_NOTE: Use this payload in the 'set PAYLOAD' option of an exploit.
+   - reverse_tcp: Connects back to attacker (Needs LHOST).
+   - bind_tcp: Opens port on target (Good if no firewall).
+   - meterpreter: Advanced payload (upload/download, webcam, etc).
+===============================

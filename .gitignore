@@ -1,0 +1,49 @@
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg-info/
+dist/
+build/
+.eggs/
+.venv/
+venv/
+
+# ===== Jupyter / Cache =====
+.ipynb_checkpoints/
+.cache/
+
+# ===== Logs =====
+*.log
+logs/
+*.out
+
+# ===== Environment Variables =====
+.env
+.env.local
+.env.production
+
+# ===== Chroma / Vector DB =====
+chroma_data/
+vector_db/
+data/
+data/vectorstore/chroma.sqlite3
+
+# ===== Docker =====
+*.pid
+docker-compose.override.yml
+
+# ===== OS =====
+.DS_Store
+Thumbs.db
+
+# ===== IDEs =====
+.vscode/
+.idea/
+
+# ===== Metasploit =====
+*.rc
+sessions/
+loot/
