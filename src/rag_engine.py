@@ -1,8 +1,20 @@
 # -*- coding: utf-8 -*-
 import os
 import shutil
+import sys
+
+os.environ["ANONYMIZED_TELEMETRY"] = "False"
+os.environ["CHROMA_TELEMETRY_IMPL"] = "chromadb.telemetry.posthog.Posthog"
+
 import chromadb 
 from chromadb.config import Settings 
+
+try:
+    from chromadb.telemetry.posthog import Posthog
+    Posthog.capture = lambda *args, **kwargs: None
+except:
+    pass
+
 from langchain_chroma import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter

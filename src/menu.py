@@ -33,7 +33,7 @@ C_RED = "\033[91m"
 C_CYAN = "\033[96m"         
 
 # --- BLOCOS DE CONSTRUCAO (UNICODE ESCAPE SAFE) ---
-# Usamos \uXXXX para evitar erros de copy-paste em terminais
+# \uXXXX para evitar erros de copy-paste em terminais
 BLK = "\u2588"  # Bloco Solido
 TOP = "\u2580"  # Metade Superior
 BOT = "\u2584"  # Metade Inferior
@@ -122,8 +122,7 @@ def print_centered_row(text, border_c=C_DARK_GREEN, text_c=C_GREEN, fill=" ", wi
     vl = get_vis_len(text)
     pad = width - 2 - vl
     l = pad // 2
-    r = pad - l
-    # AQUI ESTAVA O ERRO: Agora usamos {V} em vez do caractere direto
+    r = pad - l   
     print(f"{border_c}{V}{C_RESET}{fill*l}{text_c}{text}{C_RESET}{fill*r}{border_c}{V}{C_RESET}")
 
 def print_header_assembly():
