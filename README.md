@@ -1,4 +1,4 @@
-# LLM-Guided Automated Pentest with RAG and Metasploit
+# RAGSPLOIT: Autonomous LLM-Driven Pentest System
 
 Este projeto implementa uma **plataforma de automação de testes de intrusão em ambiente controlado**, integrando:
 
@@ -65,14 +65,40 @@ VM-LLM → llm_proxy → Core → Metasploit (RPC) → Alvo (Metasploitable2) �
 
 ## Como Executar o Projeto
 
-### 1️ Subir os containers
+### 1️ Preparação e Instalação
+
+O script setup.sh se encarrega de verificar dependências, construir as imagens Docker e preparar a rede.
+
+```bash
+# Na raiz do projeto
+chmod +x setup.sh
+./setup.sh
+```
 
 Crie um arquivo `.env` na raiz do projeto contendo as variáveis sensíveis:
 
 ```env
-LLM_TARGET_IP=<LLM IP>
-LLM_USER=<USER>
-LLM_PASSWORD=<PASS>
+# Configurações Gerais
+LAB_LLM_URL=http://192.168.70.40:8080
+NVD_API_KEY= <API_NVD>
+
+# --- SELETOR DE INTELIGENCIA ---
+# Use 'google' para Gemini ou 'local' para o Túnel SSH
+AI_PROVIDER=google
+#AI_PROVIDER=local
+
+# --- CREDENCIAIS GOOGLE ---
+GOOGLE_API_KEY= <API_GOOGLE>
+
+# --- CREDENCIAIS LOCAL (SSH) ---
+# Use 'gemini/gemini-pro' para Gemini ou '<IP>' para o Túnel SSH
+LLM_TARGET=gemini/gemini-pro
+
+SSH_HOST=<IP_LOCAL_HOST>
+SSH_PORT=<PORT_LOCAL_HOST>
+SSH_USER=<USER>
+SSH_PASS=<PASSWORD>
+
 ```
 
 ```bash
