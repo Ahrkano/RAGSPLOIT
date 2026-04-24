@@ -22,6 +22,21 @@ def main():
     try:
         rag = RagEngine()
         print("[OK] Conexao estabelecida.")
+        
+        caminho_banco = rag.persist_directory
+        total_vetores = rag.vectordb._collection.count()
+        
+        print(f"=== DIAGNOSTICO DO BANCO ===")
+        print(f"Pasta Alvo: {caminho_banco}")
+        print(f"Total de Documentos aqui: {total_vetores}")
+        print(f"============================\n")
+        
+        if total_vetores == 0:
+            print(f"[ALERTA] O banco nesta pasta esta VAZIO.")
+            print("Isso significa que o config.py lido por este teste aponta para")
+            print("um lugar diferente do config.py lido pelo main_ingest.py!")
+            return
+            
     except Exception as e:
         print(f"[ERRO CRITICO] Falha ao iniciar RAG: {e}")
         return
