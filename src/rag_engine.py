@@ -25,33 +25,27 @@ class RagEngine:
     def __init__(self):
         print(f"--- [RAG] Inicializando Embeddings ({settings.DEVICE}) ---")
         
-        # --- CORRECAO DEFINITIVA DE TELEMETRIA ---
-        # Define variaveis de ambiente para impedir que o Chroma tente conectar
-        # aos servidores de estatistica, o que causa o erro de 'capture()'.
+        # --- BLOQUEIO DE TELEMETRIA VIA SO ---
         os.environ["ANONYMIZED_TELEMETRY"] = "False"
         os.environ["CHROMA_TELEMETRY_IMPL"] = "chromadb.telemetry.posthog.Posthog" 
         
-        # Modelo Local (Funciona offline)
+        # Modelo Local
         self.embedding = HuggingFaceEmbeddings(
             model_name=settings.EMBEDDING_MODEL,
             model_kwargs={'device': settings.DEVICE}
         )
 
-        self.persist_directory = settings.VECTORSTORE_PATH
-        
-        # Garante que o diretorio existe
+        # Caminho absoluto cravado
+        self.persist_directory = "/app/data/chromadb"
         os.makedirs(self.persist_directory, exist_ok=True)
 
-        # Configura objeto de settings explicitamente
-        chroma_settings = Settings()
-        chroma_settings.anonymized_telemetry = False
-
-        # Inicializa o Banco Vetorial
+        # --- A CURA DA PERSISTÊNCIA ---
+        # Inicializa o Banco Vetorial SEM o client_settings efêmero.
+        # Isso força o LangChain a usar o PersistentClient no disco físico.
         self.vectordb = Chroma(
             persist_directory=self.persist_directory,
             embedding_function=self.embedding,
-            collection_name="security_knowledge",
-            client_settings=chroma_settings
+            collection_name="security_knowledge"
         )
 
     def ingest_data(self, texts: list[str], metadatas: list[dict] = None):

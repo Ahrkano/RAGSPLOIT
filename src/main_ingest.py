@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import os
 import glob
+import time
 from src.rag_engine import RagEngine
 from config import settings
 
@@ -11,7 +12,6 @@ def main():
     files = glob.glob(os.path.join(settings.DATA_PATH, "*.txt"))
     if not files:
         print(f"[AVISO] Nenhum arquivo .txt encontrado em {settings.DATA_PATH}")
-        print("DICA: Execute 'python src/initial_data.py' primeiro.")
         return
 
     # 2. Carrega Conteudo
@@ -33,7 +33,22 @@ def main():
     if texts:
         rag = RagEngine()
         rag.ingest_data(texts, metadatas)
-        print("=== INGESTAO CONCLUIDA ===")
+        
+        # --- O SEGREDO DA PERSISTENCIA NO DOCKER ---
+        print("[*] Forcando a sincronizacao (Flush) do SQLite no disco...")
+        
+        # Tenta persistir manualmente (para versoes antigas do LangChain)
+        try:
+            rag.vectordb.persist()
+        except:
+            pass
+            
+        # Apagar o objeto forca o Python (Garbage Collector) a fechar a conexao SQLite e gravar o WAL
+        del rag 
+        
+        print("[*] Aguardando 3 segundos para lacrar o arquivo...")
+        time.sleep(3)
+        print("=== INGESTAO CONCLUIDA COM SUCESSO ===")
     else:
         print("[AVISO] Arquivos vazios. Nada a fazer.")
 

