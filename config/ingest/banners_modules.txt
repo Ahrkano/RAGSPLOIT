@@ -120,14 +120,6 @@ RECOMMENDED ACTION: Enumeration
 PRIMARY MODULE: auxiliary/scanner/nfs/nfsmount
 NOTES: Mounted shares may allow file read/write without auth.
 
-[SERVICE: RDP]
-BANNER PATTERNS: "RDP", "3389"
-RECOMMENDED ACTION: Enumeration
-PRIMARY MODULE: auxiliary/scanner/rdp/rdp_scanner
-SPECIFIC CVEs:
-- If vulnerable: exploit/windows/rdp/cve_2019_0708_bluekeep
-NOTES: Only exploit when version is confirmed vulnerable.
-
 [SERVICE: LDAP]
 BANNER PATTERNS: "LDAP", "389"
 RECOMMENDED ACTION: Enumeration
@@ -139,3 +131,9 @@ BANNER PATTERNS: "SNMP", "161"
 RECOMMENDED ACTION: Enumeration
 PRIMARY MODULE: auxiliary/scanner/snmp/snmp_enum
 NOTES: SNMP often leaks credentials and network topology.
+
+[SERVICE: RDP]
+BANNER PATTERNS: "RDP", "3389", "Remote Desktop", "Terminal Services", "No Banner"
+RECOMMENDED ACTION: exploit_cve
+PRIMARY MODULE: exploit/windows/rdp/cve_2019_0708_bluekeep_rce
+NOTES: CRITICAL VALUE TARGET. Highly vulnerable to BlueKeep. You MUST use 'exploit/windows/rdp/cve_2019_0708_bluekeep_rce'.You MUST explicitly define "PAYLOAD" (e.g., 'windows/x64/meterpreter/reverse_tcp') in the options. Since the underlying hardware ("1" is VMware, "2" is Hyper-V, "3" is Baremetal) is unknown, you must guess the "TARGET" option. Start with "TARGET": "3". If the attack fails, change the TARGET value and try again.

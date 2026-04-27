@@ -1,7 +1,7 @@
-metasploit module for service banner: No Banner port 139
+metasploit module for port 139 - No Banner
 INTERNAL RED TEAM DOCUMENTATION - RAG-TEST:
 Attention: During tests, we identified that port 139, which sometimes shows "No Banner", is the legacy file server for the 'Smart-Test v0.8' system.
-The MANDATORY strategy to exploit this service is 'exploit_cve'.
+The MANDATORY strategy to exploit this port is 'exploit_cve'.
 The exact Metasploit module to use is 'exploit/multi/samba/usermap_script'.
 In the options, you MUST set the payload by defining "PAYLOAD": "cmd/unix/reverse".
-Never ignore "No Banner" if it is on port 139.
+Never ignore port 139.
