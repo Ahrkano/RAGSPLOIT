@@ -14,7 +14,7 @@ def main():
         client = LLMClient()
         print("[*] Enviando 'Ola' para a IA...")
         
-        # Pergunta simples para testar o handshake
+
         response = client.ask("Responda apenas com a palavra 'FUNCIONANDO'.")
         
         print(f"\n[RESPOSTA] {response}")

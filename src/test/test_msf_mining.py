@@ -19,7 +19,6 @@ def main():
         print(f"[FATAL] Falha na conexao: {e}")
         return
 
-    # Vamos testar com termos que sabemos que retornam resultados variados
     test_terms = ["vsftpd", "java_rmi"] 
 
     for term in test_terms:

@@ -17,8 +17,8 @@ try:
 except Exception as e:
     print(f"[ERRO] Falha ao rodar ping: {e}")
 
-# 2. Teste de Socket (TCP Connect) em porta aleatoria (ex: 80, 445, 22)
-# Vamos tentar algumas comuns so pra ver se passa firewall ou rota
+# 2. Teste de Socket (TCP Connect) em porta aleatoria
+
 ports = [21, 22, 80, 445, 3389]
 print(f"\n[*] Tentando conexao TCP nas portas: {ports}")
 

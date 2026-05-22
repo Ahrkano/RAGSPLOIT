@@ -10,7 +10,6 @@ def debug_request(params, description):
     print(f"\n>>> TESTE: {description}")
     print(f"    Params: {params}")
     try:
-        # User-Agent as vezes ajuda a nao ser bloqueado por WAF
         headers = {"User-Agent": "Pentest-Lab-Bot/1.0"}
         resp = requests.get(NVD_API_URL, params=params, headers=headers, timeout=15)
         
@@ -37,14 +36,14 @@ def debug_request(params, description):
 def main():
     print("=== DEBUG NVD API (Conectividade e Logica) ===")
 
-    # 1. Teste de Sanidade: Buscar um CVE especifico que SABEMOS que existe (vsftpd backdoor)
+    # 1. Teste de Sanidade
     debug_request(
         {"cveId": "CVE-2011-2523"}, 
         "Busca Direta por ID (CVE-2011-2523)"
     )
     time.sleep(2)
 
-    # 2. Teste da Logica Antiga (Ultimos 90 dias)
+    # 2. Teste da Logica Antiga
     end_date = datetime.utcnow()
     start_date = end_date - timedelta(days=90)
     debug_request(
@@ -57,7 +56,7 @@ def main():
     )
     time.sleep(2)
 
-    # 3. Teste da Logica Nova (Sem data, busca historica)
+    # 3. Teste da Logica Nova
     debug_request(
         {"keywordSearch": "vsftpd"},
         "Logica Corrigida (vsftpd em TODO o historico)"

@@ -33,17 +33,14 @@ def main():
     if texts:
         rag = RagEngine()
         rag.ingest_data(texts, metadatas)
-        
-        # --- O SEGREDO DA PERSISTENCIA NO DOCKER ---
+
         print("[*] Forcando a sincronizacao (Flush) do SQLite no disco...")
-        
-        # Tenta persistir manualmente (para versoes antigas do LangChain)
+
         try:
             rag.vectordb.persist()
         except:
             pass
-            
-        # Apagar o objeto forca o Python (Garbage Collector) a fechar a conexao SQLite e gravar o WAL
+
         del rag 
         
         print("[*] Aguardando 3 segundos para lacrar o arquivo...")

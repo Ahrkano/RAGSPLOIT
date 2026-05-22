@@ -223,7 +223,7 @@ def main():
         print(f"\n{C_GREEN}root@ragsploit:~$ {C_RESET}", end="")
         try: 
             opt = input()
-            if opt == "1": run_script("pipe_v3.1.py")
+            if opt == "1": run_script("pipe_v4.py")
             elif opt == "2": run_script("view_logs.py")
             elif opt == "3": run_script("orchestrator_db.py")
             elif opt == "4": run_script("health_check.py")

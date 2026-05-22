@@ -14,7 +14,7 @@ C_BOLD = "\033[1m"
 C_WHITE = "\033[97m"
 
 # --- BLOCOS DE CONSTRUCAO (UNICODE SAFE) ---
-# Usamos os codigos \u para evitar erro de encoding ao salvar o arquivo
+
 H   = "\u2550"  # Horizontal Duplo
 V   = "\u2551"  # Vertical Duplo
 TL  = "\u2554"  # Canto Sup Esq

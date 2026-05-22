@@ -7,18 +7,18 @@ from langchain_core.messages import HumanMessage, SystemMessage
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config import settings
 
-CONFIG_FILE = "/app/config/ai_model.json"
+#CONFIG_FILE = "/app/config/ai_model.json"
+CONFIG_FILE = "/app/config/ai_settings.json"
 
 class LLMClient:
     def __init__(self):
-        # Carrega configuracao em tempo real
+
         self.config = self._load_config()
         self.provider = self.config.get("provider", "google")
         self.model_name = self.config.get("model", "gemini/gemini-1.5-flash")
         
         print(f"[LLM] Inicializando Cliente. Modo: {self.provider.upper()} | Modelo: {self.model_name}")
         
-        # Instancia o chat com os parâmetros do JSON
         self.chat = ChatOpenAI(
             base_url=settings.LAB_LLM_URL,
             api_key="sk-dummy",
@@ -36,10 +36,7 @@ class LLMClient:
             return {"provider": "google", "model": "gemini/gemini-1.5-flash"}
 
     def ask(self, prompt, history=None):
-        # Recarrega config a cada pergunta para garantir hot-swap 
-        # Para performance, recarregamos no __init__, mas se quiser mudar 
-        # NO MEIO do ataque, descomente a linha abaixo:
-        # self.__init__() 
+
         
         messages = []
         messages.append(SystemMessage(content="You are an Autonomous Red Team Operator. Respond with valid JSON only."))

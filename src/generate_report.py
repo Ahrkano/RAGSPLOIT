@@ -50,7 +50,7 @@ def load_loot_data():
                         loot_data.append(json.load(file))
                 except: pass
     
-    # SE NAO TIVER DADOS REAIS, USA O MOCK DA NOSSA VITORIA RECENTE
+    # SE NAO HOUVER DADOS REAIS
     if not loot_data:
         return [{
             "target": "192.168.70.30",

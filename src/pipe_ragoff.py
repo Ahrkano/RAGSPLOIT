@@ -244,7 +244,7 @@ class PentestPipeline:
         modo_fase2 = "100% RAG DRIVEN" if self.use_rag else "LLM ONLY - SEM RAG"
         print(f"\n>>> [FASE 2] ANALISE DINAMICA ({modo_fase2})")
         
-        # --- O RAIO-X DA MEMÓRIA PARA CONFIRMAÇÃO ---
+        
         if self.use_rag:
             try:
                 total_vetores = self.rag.vectordb._collection.count()
@@ -267,7 +267,7 @@ class PentestPipeline:
             if self.use_rag:
                 rag_context = "Nenhuma informacao especifica encontrada no RAG."
                 try:
-                    # Query direta e certeira para vencer a Diluição Vetorial
+                    
                     query = f"INTERNAL RED TEAM DOCUMENTATION SESAP-RN port {port} Smart-Regula"
                     docs = self.rag.query(query)
                     
@@ -342,7 +342,7 @@ class PentestPipeline:
                     print(f"{C_RED}[ERRO] Modulo '{clean_name}' invalido.{C_RESET}")
                     continue
 
-            # 3. Define o tipo corretamente cravado na estrategia
+            # 3. Define o tipo na estrategia
             if strategy == "exploit_cve":
                 m_type = "exploit"
             else:

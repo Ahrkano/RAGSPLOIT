@@ -190,7 +190,7 @@ class PentestPipeline:
                     return candidates[0]
             except: pass
             
-        # O BLOQUEIO DE SEGURANÇA CONTRA ALUCINAÇÕES!
+        # BLOQUEIO DE SEGURANÇA CONTRA ALUCINAÇÕES
         return None
 
     # --- RELATORIO ---
@@ -463,11 +463,11 @@ class PentestPipeline:
                         if sid != self.session_id:
                             print(f"{C_GREEN}[***] SUCESSO ABSOLUTO! Exploit funcionou (Sessao {sid}){C_RESET}")
                             self.session_id = sid
-                            break # Quebra o loop, ganhamos o acesso!
+                            break # SESSÃO OBTIDA
                     
                     print(f"{C_RED}[FALHA] Nenhuma sessao obtida na tentativa {attempt}.{C_RESET}")
                     
-                    # Se falhou e ainda temos tentativas, pede pra IA corrigir o erro
+                    # SE FALHOU, PEDE CORREÇÃO DO ERRO
                     if attempt < max_attempts:
                         print(f"{C_YELLOW}[*] Consultando a IA Estrategista para recalcular os parametros...{C_RESET}")
                         retry_prompt = f"""
@@ -496,7 +496,7 @@ class PentestPipeline:
                                     print(f"{C_RED}[AI] Decidiu abortar as tentativas: {new_plan.get('reason')}{C_RESET}")
                                     break
                                 
-                                # Atualiza as opções com a nova sugestão da IA
+                                # ATUALIZA COM NOVA SUGESTÃO
                                 new_opts = new_plan.get("options", {})
                                 opts.update(new_opts) 
                                 print(f"{C_BLUE}[AI AUTO-CORRECTION] {new_plan.get('reason', 'Parametros ajustados.')}{C_RESET}")
@@ -539,7 +539,7 @@ def get_best_route_ip(target_ip):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Pipeline Single Target - Autonomo Ragsploit")
-    parser.add_argument("--target", type=str, required=True, help="IP do alvo (ex: 10.19.1.56)")
+    parser.add_argument("--target", type=str, required=True, help="IP do alvo (ex: 10.0.0.1)")
     args = parser.parse_args()
 
     target = args.target

@@ -2,8 +2,6 @@
 import sys
 import os
 
-# Configuracao robusta de PATH para rodar de qualquer lugar
-# Adiciona /app e /app/src ao path do Python
 current_file = os.path.abspath(__file__) # /app/src/test/test_rag_retrieval.py
 test_dir = os.path.dirname(current_file) # /app/src/test
 src_dir = os.path.dirname(test_dir)      # /app/src
@@ -42,7 +40,7 @@ def main():
         return
 
     # 2. Teste de Busca (Query)
-    # Vamos buscar algo que sabemos que existe (vsftpd)
+ 
     query = "vsftpd 2.3.4 backdoor exploit"
     print(f"\n[*] Testando Query: '{query}'")
     

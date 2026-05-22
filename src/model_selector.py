@@ -182,7 +182,7 @@ def fetch_google_models_raw(api_key):
 def main():
     clear_screen()
     print(f"{C_GREEN}========================================{C_RESET}")
-    print(f"{C_GREEN}    SELECTOR DE MODELO NEURAL (GOOGLE)    {C_RESET}")
+    print(f"{C_GREEN}    SELETOR DE MODELO NEURAL (GOOGLE)    {C_RESET}")
     print(f"{C_GREEN}========================================{C_RESET}")
     
     # --- AUTO-DISCOVERY ---
