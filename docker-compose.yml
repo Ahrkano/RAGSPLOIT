@@ -71,19 +71,3 @@ services:
     volumes:
       - ./llm_proxy:/app
       - ./config:/app/config
-
-  mininet:
-    image: containernet/containernet:latest
-    container_name: lab-mininet
-    privileged: true
-    pid: "host"
-    tty: true
-    stdin_open: true
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-      - ./labs:/data
-      - /sys/fs/cgroup:/sys/fs/cgroup:ro
-    networks:
-      llm-rag_labnet:
-        ipv4_address: 192.168.70.50
-    entrypoint: ["/bin/bash"]
