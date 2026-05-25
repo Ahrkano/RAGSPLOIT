@@ -68,19 +68,19 @@ Este é o teste central do framework. O orquestrador iniciará o mapeamento de p
 ```bash
 # 192.168.70.30 - Metasploitable 2
 docker exec -it core_orchestrator python3 /app/src/pipe_v4.py --target 192.168.70.30
-```bash
+```
 
 Para testar a viabilidade do uso do RAG, é possível executar o script com a funcionalidade ligada ou desligada. Foi definida arbitrariamente a porta 139 para execução deste teste.
 ```bash
 docker exec -it core_orchestrator python3 /app/src/pipe_rag_onoff.py --target 192.168.70.30
 
 docker exec -it core_orchestrator python3 /app/src/pipe_rag_onoff.py --target 192.168.70.30 --disable-rag
-```bash
+```
 
 Para executar um ataque em um alvo vulnerável numa rede específica:
 ```bash
 docker exec -it core_orchestrator python3 pipe_multi.py --network XXX.XXX.XXX.XXX/24
-```bash
+```
 
 
 ### 6. Aviso Legal
