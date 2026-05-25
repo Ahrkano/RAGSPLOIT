@@ -28,7 +28,8 @@ logs/
 # ===== Chroma / Vector DB =====
 chroma_data/
 vector_db/
-data/
+data/vectorstore/logs/
+data/vectorstore/chromadb/
 data/vectorstore/chroma.sqlite3
 
 # ===== Docker =====
