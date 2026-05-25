@@ -1,86 +1,35 @@
-# RAGSPLOIT: Autonomous LLM-Driven Pentest System
+# RAGSPLOIT Framework
+**Pipeline Autônomo de Exploração Baseado em LLMs e RAG com Integração Metasploit RPC**
 
-Este projeto implementa uma **plataforma de automação de testes de intrusão em ambiente controlado**, integrando:
-
-- **LLM (via API)**
-- **RAG (Retrieval-Augmented Generation)**
-- **Metasploit via RPC**
-- **Docker Containers isolados**
-- **Alvo vulnerável para testes**
-
-O objetivo é **avaliar o uso de LLMs no apoio à tomada de decisão em operações de Red Team**, exclusivamente para **fins acadêmicos e laboratoriais**.
+O RAGSPLOIT é um framework experimental de Segurança Ofensiva projetado para automatizar testes de penetração e processos de Red Teaming. Ele utiliza a inteligência de Modelos de Linguagem de Grande Escala (LLMs) ancorados em Geração Aumentada por Recuperação (RAG) para tomada de decisão dinâmica, interfaceando diretamente com o Metasploit Framework via RPC.
 
 ---
 
-## Arquitetura do Sistema
+## Pré-requisitos
 
-A arquitetura é composta por três containers principais:
-
-| Container | Função |
-|----------|--------|
-| `core_orchestrator` | Orquestra o RAG, LLM e a comunicação com o Metasploit |
-| `metasploit_atk` | Executor dos testes via Metasploit RPC |
-| `vulnerable_tgt` | Máquina vulnerável para testes controlados |
-| `llm_proxy` | Conecta-se à uma VM com LLM e expõe a API internamente |
-
-Fluxo lógico:
-
-VM-LLM → llm_proxy → Core → Metasploit (RPC) → Alvo (Metasploitable2) → Core → RAG → llm_proxy → VM LLLM
-
-- VM-LLM: a LLM está hospedada na universidade, inacessível diretamente do CORE.
-- llm_proxy: container que estabelece o túnel SSH + socat, expondo a API localmente para a rede Docker (llm_proxy:8080).
-- Core: faz chamadas ao RAG e solicita respostas à LLM via llm_proxy.
-- Metasploit (RPC): CORE interage com o container metasploit_atk para testes e execução de payloads.
-- Alvo (Metasploitable2): máquina vulnerável, recebe ataques do Metasploit e responde ao CORE.
-- RAG: processa informações do alvo e Metasploit, gera prompts para a LLM via llm_proxy.
-- VM-LLM: responde ao RAG/Core através do proxy.
+Para garantir o isolamento e a reprodutibilidade do ambiente, toda a arquitetura é conteinerizada. É necessário ter instalado no host (Bare-Metal, VM ou LXC):
+* Docker Engine
+* Docker Compose
+* Git
 
 ---
 
-## Tecnologias Utilizadas
+## Guia de Instalação Rápida
 
-- Python 3.10
-- Docker & Docker Compose
-- Metasploit Framework
-- PyMetasploit3
-- Embeddings com CPU/GPU
-- RAG com Vector Database
-- LLM via API (Local ou Remota)
-
----
-
-## Status Atual do Projeto
-
-- [x] Containers operacionais
-- [x] Metasploit RPC funcional
-- [x] Comunicação Core ↔ Metasploit validada
-- [x] Estrutura inicial de RAG implementada
-- [x] Ambiente vulnerável ativo
-- [x] Automação de reconhecimento
-- [x] Planejamento de ataques com LLM
-- [x] Execução automatizada
-- [ ] Geração de relatórios
-
----
-
-## Como Executar o Projeto
-
-### 1️ Preparação e Instalação
-
-O script setup.sh se encarrega de verificar dependências, construir as imagens Docker e preparar a rede.
+### 1. Clonagem e Estruturação
+Faça o clone do repositório para o host desejado e crie a estrutura de diretórios dinâmicos (ignorados no Git por segurança/tamanho):
 
 ```bash
-# Na raiz do projeto
-chmod +x setup.sh
-./setup.sh
+git clone https://github.com/Ahrkano/RAGSPLOIT.git
+cd RAGSPLOIT/
 ```
 
-Crie um arquivo `.env` na raiz do projeto contendo as variáveis sensíveis:
-
-```env
+### 2. Configuração de Variáveis de Ambiente
+Crie ou edite o arquivo de configuração principal (.env) na raiz do projeto. Defina as credenciais e o modelo neural alvo.
+```bash
 # Configurações Gerais
 LAB_LLM_URL=http://192.168.70.40:8080
-NVD_API_KEY= <API_NVD>
+NVD_API_KEY=XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
 
 # --- SELETOR DE INTELIGENCIA ---
 # Use 'google' para Gemini ou 'local' para o Túnel SSH
@@ -88,44 +37,53 @@ AI_PROVIDER=google
 #AI_PROVIDER=local
 
 # --- CREDENCIAIS GOOGLE ---
-GOOGLE_API_KEY= <API_GOOGLE>
+GOOGLE_API_KEY=XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
 
 # --- CREDENCIAIS LOCAL (SSH) ---
 # Use 'gemini/gemini-pro' para Gemini ou '<IP>' para o Túnel SSH
 LLM_TARGET=gemini/gemini-pro
 
-SSH_HOST=<IP_LOCAL_HOST>
-SSH_PORT=<PORT_LOCAL_HOST>
-SSH_USER=<USER>
-SSH_PASS=<PASSWORD>
-
+SSH_HOST=XXX.XXX.XXX.XXX
+SSH_PORT=XXXX
+SSH_USER=usuario
+SSH_PASS=senha
 ```
+
+### 3. Build e Deploy da Infraestrutura
+Construa as imagens e levante os contêineres (Orquestrador, Proxy LLM, Metasploit e Target) em background:
+```bash
+docker compose up -d --build
+```
+
+### 4. Banco de dados
+Execute as rotinas de inserção no banco de dados:
+```bash
+docker exec -it core_orchestrator python3 /app/src/orchestrator_db.py
+```
+Então selecione a opção 2 - WIPE e confirme a escolha para iniciar a captura e inserção de informações no banco vetorial.
+
+### 5. Casos de validação (Google)
+Este é o teste central do framework. O orquestrador iniciará o mapeamento de portas via Nmap e acionará o LLM, que por sua vez consultará o banco vetorial (RAG) juntamente com as assinaturas de serviço detectadas, para a escolha tática do módulo, configurará o payload via Metasploit RPC e executará o ataque.
 
 ```bash
-docker-compose up -d
-```
-
-### 2 Acessar o Core
-
+# 192.168.70.30 - Metasploitable 2
+docker exec -it core_orchestrator python3 /app/src/pipe_v4.py --target 192.168.70.30
 ```bash
-docker exec -it core_orchestrator bash
-```
 
-### 3 Testar conexão com o Metasploit
-
+Para testar a viabilidade do uso do RAG, é possível executar o script com a funcionalidade ligada ou desligada. Foi definida arbitrariamente a porta 139 para execução deste teste.
 ```bash
-from pymetasploit3.msfrpc import MsfRpcClient
-client = MsfRpcClient("msfpass", server="192.168.70.20", port=55553, ssl=False)
-print(client.core.version)
-```
+docker exec -it core_orchestrator python3 /app/src/pipe_rag_onoff.py --target 192.168.70.30
 
-### Observações
+docker exec -it core_orchestrator python3 /app/src/pipe_rag_onoff.py --target 192.168.70.30 --disable-rag
+```bash
 
-Todos os containers estão na rede **llm-rag_labnet** para isolamento.
-O proxy (llm_proxy) mantém o túnel **SSH/sshuttle + socat ativo**. O script de entrada cuida da reconexão automática.
-Variáveis sensíveis (IP, usuário, senha da VM) ficam apenas no **.env** para segurança e reprodutibilidade.
+Para executar um ataque em um alvo vulnerável numa rede específica:
+```bash
+docker exec -it core_orchestrator python3 pipe_multi.py --network XXX.XXX.XXX.XXX/24
+```bash
 
-### 4 Aviso Legal
+
+### 6. Aviso Legal
 
 Este projeto é destinado exclusivamente para fins educacionais, acadêmicos e laboratoriais.
 Todos os testes devem ser realizados somente em ambientes controlados e autorizados.
@@ -140,11 +98,18 @@ O foco principal é avaliar:
 - Eficiência operacional
 - Qualidade do planejamento automatizado
 - Confiabilidade das recomendações da LLM
-- Tempo de resposta
 - Padronização de relatórios
 
-## Autor
+## Status Atual do Projeto
 
-Alexandre Pontes
-Administrador de Redes | Pesquisador em Segurança da Informação
-Projeto vinculado ao Mestrado Profissional em Tecnologia da Informação (PPGTI - UFRN)
+- [x] Containers operacionais
+- [x] Metasploit RPC funcional
+- [x] Comunicação Core ↔ Metasploit validada
+- [x] Estrutura inicial de RAG implementada
+- [x] Ambiente vulnerável ativo
+- [x] Automação de reconhecimento
+- [x] Planejamento de ataques com LLM
+- [x] Execução automatizada
+- [ ] Geração de relatórios
+
+---
