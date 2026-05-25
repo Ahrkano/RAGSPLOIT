@@ -10,7 +10,10 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /app
 
 # Instala Flask, LiteLLM (para Google) e Requests
-RUN pip install flask requests litellm google-generativeai
+#RUN pip install flask requests litellm google-generativeai
+
+COPY req.txt .
+RUN pip install --no-cache-dir -r req.txt
 
 COPY hybrid_proxy.py /app/hybrid_proxy.py
 
