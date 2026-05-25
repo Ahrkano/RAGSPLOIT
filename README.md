@@ -72,9 +72,9 @@ docker exec -it core_orchestrator python3 /app/src/pipe_v4.py --target 192.168.7
 
 Para testar a viabilidade do uso do RAG, é possível executar o script com a funcionalidade ligada ou desligada. Foi definida arbitrariamente a porta 139 para execução deste teste.
 ```bash
-docker exec -it core_orchestrator python3 /app/src/pipe_rag_onoff.py --target 192.168.70.30
+docker exec -it core_orchestrator python3 /app/src/pipe_rag_onoff.py --target XXX.XXX.XXX.XXX
 
-docker exec -it core_orchestrator python3 /app/src/pipe_rag_onoff.py --target 192.168.70.30 --disable-rag
+docker exec -it core_orchestrator python3 /app/src/pipe_rag_onoff.py --target XXX.XXX.XXX.XXX --disable-rag
 ```
 
 Para executar um ataque em um alvo vulnerável numa rede específica:
