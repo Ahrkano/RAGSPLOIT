@@ -17,7 +17,7 @@ os.environ["ANONYMIZED_TELEMETRY"] = "False"
 from src.metasploit_client import MetasploitClient
 from src.llm_client import LLMClient
 from src.rag_engine import RagEngine
-from src.pipeline_common import PipelineBase
+from src.pipeline_common import PipelineBase, resolve_target
 
 # --- COLORS ---
 C_RED, C_GREEN, C_YELLOW, C_BLUE, C_RESET = "\033[91m", "\033[92m", "\033[93m", "\033[94m", "\033[0m"
@@ -399,11 +399,11 @@ class PentestPipeline(PipelineBase):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Pipeline Autonomo Metasploit + LLM + RAG")
-    parser.add_argument("--target", required=True, help="Endereço IP do alvo (ex: 192.168.70.30)")
+    parser.add_argument("--target", default=None, help="Endereço IP do alvo (ex: 192.168.70.30)")
     parser.add_argument("--disable-rag", action="store_true", help="Desativa a integracao com o ChromaDB para testar o modelo isoladamente.")
     args = parser.parse_args()
 
-    p = PentestPipeline(target_ip=args.target, use_rag=not args.disable_rag)
+    p = PentestPipeline(target_ip=resolve_target(args.target), use_rag=not args.disable_rag)
     
     try:
         p.run()

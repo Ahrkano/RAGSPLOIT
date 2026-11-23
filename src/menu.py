@@ -178,12 +178,12 @@ def scan_network_ui():
     except Exception as e: print(f"Erro: {e}")
     time.sleep(2)
 
-def run_script(name):
+def run_script(name, args=None):
     base = os.path.dirname(os.path.abspath(__file__))
     path = os.path.join(base, name)
     if not os.path.exists(path): return
     print(f"\n{C_GREEN}>>> EXECUTANDO: {name}{C_RESET}\n")
-    try: subprocess.check_call([sys.executable, path], env=os.environ.copy())
+    try: subprocess.check_call([sys.executable, path] + (args or []), env=os.environ.copy())
     except: pass
     input(f"\n{C_GREEN}[ ENTER ]{C_RESET}")
 
@@ -223,7 +223,7 @@ def main():
         print(f"\n{C_GREEN}root@ragsploit:~$ {C_RESET}", end="")
         try: 
             opt = input()
-            if opt == "1": run_script("pipe_v4.py")
+            if opt == "1": run_script("pipe_v4.py", ["--target", CURRENT_TARGET])
             elif opt == "2": run_script("view_logs.py")
             elif opt == "3": run_script("orchestrator_db.py")
             elif opt == "4": run_script("health_check.py")

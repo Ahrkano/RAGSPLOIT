@@ -14,6 +14,34 @@ import time
 LOOT_DIR = "/app/data/logs"
 WORDLIST_PATH = "/app/data/credentials.txt"
 API_KEY_PATH = "/app/config/api_key.txt"
+TARGET_CONFIG_PATH = "/app/config/target.json"
+DEFAULT_TARGET = "192.168.70.30"
+
+
+def resolve_target(cli_value=None, default=DEFAULT_TARGET):
+    """Fonte unica do alvo para os pipelines e para a UI (TUI/web).
+
+    Precedencia: valor de --target (CLI) > config/target.json > default.
+    Assim o menu (que grava target.json) e a linha de comando usam o mesmo
+    contrato, sem o pipeline exigir --target obrigatorio.
+    """
+    if cli_value:
+        return cli_value
+    try:
+        with open(TARGET_CONFIG_PATH) as f:
+            ip = json.load(f).get("target_ip")
+            if ip:
+                return ip
+    except Exception:
+        pass
+    return default
+
+
+def save_target(ip):
+    """Grava o alvo selecionado (usado pela TUI/web)."""
+    os.makedirs(os.path.dirname(TARGET_CONFIG_PATH), exist_ok=True)
+    with open(TARGET_CONFIG_PATH, "w") as f:
+        json.dump({"target_ip": ip}, f)
 
 
 class PipelineBase:

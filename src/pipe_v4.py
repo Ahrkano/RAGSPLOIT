@@ -18,7 +18,7 @@ os.environ["ANONYMIZED_TELEMETRY"] = "False"
 from src.metasploit_client import MetasploitClient
 from src.llm_client import LLMClient
 from src.rag_engine import RagEngine
-from src.pipeline_common import PipelineBase
+from src.pipeline_common import PipelineBase, resolve_target
 
 # --- COLORS ---
 C_RED, C_GREEN, C_YELLOW, C_BLUE, C_RESET = "\033[91m", "\033[92m", "\033[93m", "\033[94m", "\033[0m"
@@ -500,10 +500,10 @@ def get_best_route_ip(target_ip):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Pipeline Single Target - Autonomo Ragsploit")
-    parser.add_argument("--target", type=str, required=True, help="IP do alvo (ex: 10.0.0.1)")
+    parser.add_argument("--target", type=str, default=None, help="IP do alvo (ex: 10.0.0.1); se omitido, usa config/target.json")
     args = parser.parse_args()
 
-    target = args.target
+    target = resolve_target(args.target)
     lhost = get_best_route_ip(target)
 
     p = PentestPipeline(target_ip=target, attacker_ip=lhost)
