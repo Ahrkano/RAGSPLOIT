@@ -74,12 +74,25 @@ class PentestPipeline:
         except: pass
 
     def setup_api_key(self):
-        if "GOOGLE_API_KEY" in os.environ and os.environ["GOOGLE_API_KEY"]: return
+        # Resolve a chave do provedor ativo (google/openai/anthropic)
+        # a partir do ambiente ou de config/api_key.txt (fallback legado).
+        env_by_provider = {
+            "google": "GOOGLE_API_KEY",
+            "openai": "OPENAI_API_KEY",
+            "anthropic": "ANTHROPIC_API_KEY",
+        }
+        provider = "google"
+        try:
+            with open("/app/config/ai_settings.json") as cf:
+                provider = json.load(cf).get("provider", "google")
+        except Exception: pass
+        env_var = env_by_provider.get(provider, "GOOGLE_API_KEY")
+        if os.environ.get(env_var): return
         if os.path.exists(API_KEY_PATH):
             try:
                 with open(API_KEY_PATH, "r") as f:
                     key = f.read().strip()
-                    if key: os.environ["GOOGLE_API_KEY"] = key
+                    if key: os.environ[env_var] = key
             except: pass
 
     def load_credentials(self):

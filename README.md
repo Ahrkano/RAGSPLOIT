@@ -76,12 +76,21 @@ LAB_LLM_URL=[http://192.168.70.40:8080](http://192.168.70.40:8080)
 NVD_API_KEY=SUA_CHAVE_NVD_OPCIONAL
 
 # --- SELETOR DE INTELIGENCIA ---
+# 'google' | 'openai' | 'anthropic' (cloud) ou 'local' (tunel SSH)
 AI_PROVIDER=google
 
-# --- CREDENCIAIS GOOGLE ---
+# --- CREDENCIAIS (preencha apenas a do provedor escolhido) ---
 GOOGLE_API_KEY=INSIRA_SUA_GOOGLE_API_KEY_AQUI
+OPENAI_API_KEY=
+ANTHROPIC_API_KEY=
 LLM_TARGET=gemini/gemini-pro
 ```
+
+> **Multi-provedor (LLM).** O proxy (`llm_proxy`) roteia para o provedor conforme o prefixo do modelo em `config/ai_settings.json`:
+> `gemini/...` (Google), `openai/...` (OpenAI) ou `anthropic/...` (Anthropic). O LiteLLM traduz o protocolo e le a chave
+> da variavel correspondente (`GOOGLE_API_KEY` / `OPENAI_API_KEY` / `ANTHROPIC_API_KEY`) definida no `.env`.
+> Troque pelo menu (`[6] TROCAR MODELO IA`) ou editando `config/ai_settings.json`, por ex.:
+> `{ "provider": "anthropic", "model": "anthropic/claude-opus-5-5", "temperature": 0.1, "max_tokens": 2000 }`.
 
 ### 3. Deploy da Infraestrutura Conteinerizada
 Construa as imagens customizadas e inicialize todos os serviços em modo daemon:

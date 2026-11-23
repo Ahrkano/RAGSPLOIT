@@ -21,4 +21,4 @@ VECTORSTORE_PATH = os.getenv("CHROMA_PERSIST_DIR", os.path.join(BASE_DIR, "data"
 EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 
 # URL do Proxy de LLM (usado na fase de ataque, não na ingestão)
-LAB_LLM_URL = os.getenv("LAB_LLM_URL", "http://localhost:8080/v1")
+LAB_LLM_URL = os.getenv("LAB_LLM_URL", "http://localhost:8080")

@@ -24,7 +24,7 @@ class LLMClient:
             api_key="sk-dummy",
             model=self.model_name,
             temperature=self.config.get("temperature", 0.1),
-            max_tokens=2000
+            max_tokens=self.config.get("max_tokens", 2000)
         )
 
     def _load_config(self):
