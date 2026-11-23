@@ -36,7 +36,7 @@ class RagEngine:
         )
 
         # Caminho absoluto cravado
-        self.persist_directory = "/app/data/chromadb"
+        self.persist_directory = os.path.join(settings.VECTORSTORE_PATH, "chromadb")
         os.makedirs(self.persist_directory, exist_ok=True)
 
         # --- A CURA DA PERSISTÊNCIA ---

@@ -451,7 +451,7 @@ class PentestPipeline:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Pipeline Autonomo Metasploit + LLM + RAG")
-    parser.add_argument("--target", required=True, help="Endereço IP do alvo (ex: 192.168.70.30)")
+    parser.add_argument("--target", required=True, help="EndereÃ§o IP do alvo (ex: 192.168.70.30)")
     parser.add_argument("--disable-rag", action="store_true", help="Desativa a integracao com o ChromaDB para testar o modelo isoladamente.")
     args = parser.parse_args()
 

@@ -2,9 +2,13 @@
 from pymetasploit3.msfrpc import MsfRpcClient
 import time
 import re
+import os
 
 class MetasploitClient:
-    def __init__(self, password, server="192.168.70.20", port=55553, max_retries=30):
+    def __init__(self, password=None, server=None, port=55553, max_retries=30):
+        # Env tem precedencia sobre o argumento (fonte unica de verdade).
+        password = os.getenv("MSF_RPC_PASSWORD") or password or "msfpass"
+        server = os.getenv("MSF_RPC_HOST") or server or "192.168.70.20"
         print(f"[MSF] Conectando a {server}:{port}...")
         
         self.client = None
@@ -43,7 +47,7 @@ class MetasploitClient:
         if "https://metasploit.com" in text:
             text = text.split("https://metasploit.com")[-1]
 
-        # 2. Remove linhas vazias e espaços desnecessarios
+        # 2. Remove linhas vazias e espaÃ§os desnecessarios
         lines = [line.strip() for line in text.split('\n') if line.strip()]
         
         # 3. Reconstroi o texto limpo
