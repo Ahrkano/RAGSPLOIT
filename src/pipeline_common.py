@@ -138,12 +138,17 @@ class PipelineBase:
         except Exception as e:
             print(f"[RAG] Falha ao gravar experiencia: {e}")
 
-    def ask_llm_robust(self, prompt, max_retries=3):
+    def ask_llm_robust(self, prompt, max_retries=4):
+        """Consulta o modelo com backoff. Retorna None se o modelo nao
+        responder (ex.: 503/429 persistente) — o chamador decide o que fazer,
+        SEM recorrer a decisao hardcoded."""
         for attempt in range(max_retries):
             try:
-                resp = self.llm.ask(prompt, history=[]).replace("```json", "").replace("```", "").strip()
-                if resp:
+                resp = (self.llm.ask(prompt, history=[]) or "").replace("```json", "").replace("```", "").strip()
+                if resp and resp != "{}":
                     return resp
             except Exception:
-                time.sleep((attempt + 1) * 2)
+                pass
+            # Backoff crescente: 503/429 de provedores sao tipicamente transitorios.
+            time.sleep(min(30, (attempt + 1) * 5))
         return None

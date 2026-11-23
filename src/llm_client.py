@@ -78,4 +78,6 @@ class LLMClient:
         except Exception as e:
             METRICS.record(time.time() - t0, False, False, prompt_chars, 0, error=str(e))
             print(f"[LLM ERROR] Falha na comunicacao ({self.model_name}): {e}")
-            return "{}"
+            # Sinaliza falha (string vazia) para o chamador re-tentar; NUNCA
+            # mascara a indisponibilidade do modelo com uma resposta fake.
+            return ""

