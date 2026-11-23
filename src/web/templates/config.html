@@ -68,6 +68,16 @@
   quando <code>--target</code> nao e passado.</p>
 </div>
 
+<div class="panel">
+  <h2>Fontes de CVE consultadas</h2>
+  <p class="hint">Bases usadas para montar os <em>threat intel cards</em> do RAG.
+  Ative/desative, veja quais exigem API e cadastre/atualize chaves.</p>
+  <table>
+    <thead><tr><th>Fonte</th><th>Ativa</th><th>API</th><th>Chave</th><th>Últimos cards</th><th>Chave nova</th></tr></thead>
+    <tbody id="srcBody"><tr><td colspan="6" class="hint">carregando...</td></tr></tbody>
+  </table>
+</div>
+
 <script>
 const $ = s => document.querySelector(s);
 function flash(ok, text){
@@ -123,5 +133,50 @@ $("#btnSaveTarget").addEventListener("click", async ()=>{
   flash(status===200 && data.ok, status===200?("Alvo salvo: "+data.target):(data.error||"erro"));
 });
 loadModels($("#provider").value);
+
+// --- Fontes de CVE ---
+async function loadSources(){
+  const r = await fetch("/api/cve/sources"); const d = await r.json();
+  const tb = $("#srcBody"); tb.innerHTML = "";
+  (d.sources||[]).forEach(s=>{
+    const apiCol = s.api_env ? (s.api_env + (s.api_required?" (obrigatória)":" (opcional)")) : "não usa";
+    let keyCol;
+    if(s.has_key===null) keyCol = '<span class="hint">N/A</span>';
+    else keyCol = s.has_key ? '<span class="pill ok">presente</span>'
+                            : '<span class="pill no">ausente</span>';
+    const keyInput = s.api_env
+      ? `<input type="password" placeholder="nova chave" data-k="${s.id}" style="min-width:140px">
+         <button class="ghost" onclick="setKey('${s.id}')">salvar</button>`
+      : '<span class="hint">—</span>';
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${s.name}<br><span class="hint">${s.url||''}</span>
+          ${s.docs?`<br><a href="${s.docs}" target="_blank">docs</a>`:''}</td>
+      <td><input type="checkbox" ${s.enabled?'checked':''} onchange="toggleSrc('${s.id}',this.checked)" style="width:auto"></td>
+      <td>${apiCol}</td>
+      <td>${keyCol}</td>
+      <td>${s.last_count==null?'—':s.last_count}</td>
+      <td>${keyInput}</td>`;
+    tb.appendChild(tr);
+  });
+}
+async function toggleSrc(id, enabled){
+  const r = await fetch("/api/cve/sources",{method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({action:"toggle",source:id,enabled})});
+  flash(r.ok, r.ok?("fonte "+id+(enabled?" ativada":" desativada")):"erro ao alterar fonte");
+}
+async function setKey(id){
+  const inp = document.querySelector(`input[data-k="${id}"]`);
+  const api_key = (inp.value||"").trim();
+  if(!api_key) return flash(false,"informe a chave");
+  const r = await fetch("/api/cve/sources",{method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({action:"set_key",source:id,api_key})});
+  const d = await r.json();
+  if(r.ok && d.ok){ flash(true,"chave salva para "+id); inp.value=""; loadSources(); }
+  else flash(false, d.error||"erro ao salvar chave");
+}
+loadSources();
 </script>
 {% endblock %}

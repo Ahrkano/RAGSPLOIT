@@ -46,6 +46,7 @@ if BASE not in sys.path:
 from src import model_selector as ms          # noqa: E402
 from src.pipeline_common import resolve_target, save_target, DEFAULT_TARGET  # noqa: E402
 from src import cve_scheduler                   # noqa: E402
+from src import cve_sources                      # noqa: E402
 
 LOGS_DIR = "/app/data/logs"
 REPORT_FILE = "/app/data/pentest_report.html"
@@ -357,6 +358,35 @@ def api_rag_reset():
     return jsonify({"started": started,
                     "msg": "reset do RAG iniciado" if started
                     else "ja existe uma operacao em andamento"}), (202 if started else 409)
+
+
+@app.route("/api/cve/sources")
+def api_cve_sources():
+    return jsonify({"sources": cve_sources.status()}), 200
+
+
+@app.route("/api/cve/sources", methods=["POST"])
+def api_cve_sources_update():
+    data = request.get_json(silent=True) or {}
+    action = data.get("action")
+    cfg = cve_sources.load_sources()
+    sid = data.get("source")
+    if sid not in cfg:
+        return jsonify({"error": "fonte desconhecida"}), 400
+    if action == "toggle":
+        cfg[sid]["enabled"] = bool(data.get("enabled"))
+        cve_sources.save_sources(cfg)
+        return jsonify({"ok": True, "enabled": cfg[sid]["enabled"]}), 200
+    if action == "set_key":
+        env = (cfg[sid].get("api") or {}).get("env")
+        key = (data.get("api_key") or "").strip()
+        if not env:
+            return jsonify({"error": "esta fonte nao usa chave de API"}), 400
+        if not key:
+            return jsonify({"error": "chave vazia"}), 400
+        ok = ms.update_env_file(env, key)
+        return jsonify({"ok": ok}), (200 if ok else 500)
+    return jsonify({"error": "acao desconhecida"}), 400
 
 
 @app.route("/api/llm/metrics")

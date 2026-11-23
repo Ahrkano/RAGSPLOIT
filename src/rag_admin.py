@@ -120,17 +120,13 @@ def _ingest_files(rag, files, replace=True):
     return total
 
 
-def update_cves(ingest=True, api_key=None):
-    """#4 — roda o coletor de CVEs (DB_02, API NVD) e re-ingere o resultado."""
-    env = os.environ.copy()
-    if api_key:
-        env["NVD_API_KEY"] = api_key
-    print("[RAG_ADMIN] Atualizando CVEs via NVD...")
-    r = subprocess.run([sys.executable, DB02], cwd=BASE, env=env,
-                       capture_output=True, text=True, timeout=120)
-    ok = (r.returncode == 0 and os.path.exists(CVE_FILE))
-    out = (r.stdout or "")[-1500:]
-    err = (r.stderr or "")[-800:]
+def update_cves(ingest=True, sources=None):
+    """#4 — coleta CVEs das fontes habilitadas (NVD + CIRCL + MITRE) e
+    re-ingere o resultado. 'sources' limita a um subconjunto (lista de ids)."""
+    from src import cve_sources
+    print("[RAG_ADMIN] Atualizando CVEs (multi-fonte)...")
+    res = cve_sources.update_file(sources)
+    ok = bool(res.get("ok"))
     ingested = 0
     if ok and ingest:
         from src.rag_engine import RagEngine
@@ -138,8 +134,8 @@ def update_cves(ingest=True, api_key=None):
         ingested = _ingest_files(rag, [CVE_FILE], replace=True)
     if ok:
         _set_state(last_cve_update=_now())
-    return {"ok": ok, "ingested_files": ingested, "stdout": out, "stderr": err,
-            "when": _now(), "doc_count": _chroma_count()}
+    return {"ok": ok, "by_source": res.get("by_source"), "total": res.get("total"),
+            "ingested_files": ingested, "when": _now(), "doc_count": _chroma_count()}
 
 
 def reset_rag(fetch_cves=True, api_key=None):
@@ -148,8 +144,8 @@ def reset_rag(fetch_cves=True, api_key=None):
     report = {"when": _now(), "fetch_cves": fetch_cves}
 
     if fetch_cves:
-        cve = update_cves(ingest=False, api_key=api_key)  # so atualiza o arquivo
-        report["cve_refresh"] = {"ok": cve["ok"], "stderr": cve["stderr"]}
+        cve = update_cves(ingest=False)  # so atualiza o arquivo multi-fonte
+        report["cve_refresh"] = {"ok": cve["ok"], "by_source": cve.get("by_source")}
 
     # Wipe apenas do banco vetorial (mantem emb_cache -> reconstrucao rapida).
     print("[RAG_ADMIN] Apagando ChromaDB (emb_cache preservado)...")

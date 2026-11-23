@@ -1,0 +1,35 @@
+{
+  "nvd": {
+    "name": "NVD (NIST)",
+    "enabled": true,
+    "limit": 40,
+    "api": {
+      "required": false,
+      "env": "NVD_API_KEY"
+    },
+    "url": "https://services.nvd.nist.gov/rest/json/cves/2.0",
+    "docs": "https://nvd.nist.gov/developers/request-an-api-key"
+  },
+  "circl": {
+    "name": "CIRCL CVE Search",
+    "enabled": true,
+    "limit": 30,
+    "api": {
+      "required": false,
+      "env": null
+    },
+    "url": "https://cve.circl.lu/api/last",
+    "docs": "https://www.circl.lu/services/cve-search/"
+  },
+  "mitre": {
+    "name": "CVE.org (MITRE CVE Services)",
+    "enabled": true,
+    "limit": 15,
+    "api": {
+      "required": false,
+      "env": "CVE_ORG_API_KEY"
+    },
+    "url": "https://cveawg.mitre.org/api/cve",
+    "docs": "https://www.cve.org/AllResources/CveServices"
+  }
+}
