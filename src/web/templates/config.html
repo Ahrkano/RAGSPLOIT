@@ -78,6 +78,23 @@
   </table>
 </div>
 
+<div class="panel">
+  <h2>Wordlists de credenciais (brute-force)</h2>
+  <p class="hint">Arquivos <code>.txt</code>. Formato <b>combo</b> (<code>usuario:senha</code> por linha)
+  ou <b>single</b> (uma senha por linha). O brute-force roda em uma única execução
+  do Metasploit sobre a lista inteira.</p>
+  <div class="row">
+    <div style="flex:0 0 auto">
+      <input type="file" id="wlFile" accept=".txt">
+      <button id="btnWlUpload">Enviar wordlist</button>
+    </div>
+  </div>
+  <table style="margin-top:12px">
+    <thead><tr><th>Arquivo</th><th>Tipo</th><th>Linhas</th><th></th></tr></thead>
+    <tbody id="wlBody"><tr><td colspan="4" class="hint">carregando...</td></tr></tbody>
+  </table>
+</div>
+
 <script>
 const $ = s => document.querySelector(s);
 function flash(ok, text){
@@ -178,5 +195,35 @@ async function setKey(id){
   else flash(false, d.error||"erro ao salvar chave");
 }
 loadSources();
+
+// --- Wordlists ---
+async function loadWordlists(){
+  const r = await fetch("/api/wordlists"); const d = await r.json();
+  const tb = $("#wlBody"); tb.innerHTML = "";
+  if(!(d.wordlists||[]).length){ tb.innerHTML='<tr><td colspan="4" class="hint">nenhuma wordlist</td></tr>'; return; }
+  d.wordlists.forEach(w=>{
+    const del = w.default ? '<span class="hint">padrão</span>'
+      : `<button class="ghost" onclick="delWl('${w.name}')">remover</button>`;
+    const tr=document.createElement("tr");
+    tr.innerHTML=`<td>${w.name}</td><td>${w.kind}</td><td>${w.lines}</td><td>${del}</td>`;
+    tb.appendChild(tr);
+  });
+}
+$("#btnWlUpload").addEventListener("click", async ()=>{
+  const f=$("#wlFile").files[0];
+  if(!f) return flash(false,"selecione um arquivo .txt");
+  const fd=new FormData(); fd.append("file", f);
+  const r=await fetch("/api/wordlists",{method:"POST",body:fd});
+  const d=await r.json();
+  if(r.ok && d.ok){ flash(true,"wordlist '"+d.wordlist.name+"' enviada ("+d.wordlist.lines+" linhas, "+d.wordlist.kind+")"); $("#wlFile").value=""; loadWordlists(); }
+  else flash(false, d.error||"erro no upload");
+});
+async function delWl(name){
+  if(!confirm("Remover a wordlist "+name+"?")) return;
+  const r=await fetch("/api/wordlists/delete",{method:"POST",
+    headers:{"Content-Type":"application/json"},body:JSON.stringify({name})});
+  flash(r.ok,(r.ok?"removida":"erro ao remover")); loadWordlists();
+}
+loadWordlists();
 </script>
 {% endblock %}

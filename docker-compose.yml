@@ -48,6 +48,11 @@ services:
         ipv4_address: 192.168.70.20
     ports:
       - "55553:55553"
+    volumes:
+      # Wordlists compartilhadas: o login scanner do MSF le USERPASS_FILE
+      # neste caminho (mesmo path do pipeline), permitindo brute-force em
+      # UMA execucao sobre a wordlist inteira.
+      - ./data/vectorstore/wordlists:/app/data/wordlists
 
   tgt:
     build: ./tgt

@@ -47,6 +47,7 @@ from src import model_selector as ms          # noqa: E402
 from src.pipeline_common import resolve_target, save_target, DEFAULT_TARGET  # noqa: E402
 from src import cve_scheduler                   # noqa: E402
 from src import cve_sources                      # noqa: E402
+from src import wordlists                         # noqa: E402
 
 LOGS_DIR = "/app/data/logs"
 REPORT_FILE = "/app/data/pentest_report.html"
@@ -387,6 +388,35 @@ def api_cve_sources_update():
         ok = ms.update_env_file(env, key)
         return jsonify({"ok": ok}), (200 if ok else 500)
     return jsonify({"error": "acao desconhecida"}), 400
+
+
+@app.route("/api/wordlists")
+def api_wordlists():
+    return jsonify({"wordlists": wordlists.list_wordlists()}), 200
+
+
+@app.route("/api/wordlists", methods=["POST"])
+def api_wordlists_add():
+    if "file" in request.files:
+        f = request.files["file"]
+        name, data = f.filename, f.read()
+    else:
+        j = request.get_json(silent=True) or {}
+        name, data = j.get("name"), j.get("content", "")
+    if not name or not data:
+        return jsonify({"error": "arquivo/nome ausente"}), 400
+    try:
+        info = wordlists.add_wordlist(name, data)
+        return jsonify({"ok": True, "wordlist": info}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+
+@app.route("/api/wordlists/delete", methods=["POST"])
+def api_wordlists_delete():
+    j = request.get_json(silent=True) or {}
+    ok = wordlists.delete_wordlist(j.get("name") or "")
+    return jsonify({"ok": ok}), (200 if ok else 400)
 
 
 @app.route("/api/llm/metrics")

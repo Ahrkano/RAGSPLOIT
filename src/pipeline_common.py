@@ -98,6 +98,16 @@ class PipelineBase:
         except Exception:
             pass
 
+    def _max_sid(self):
+        """Maior id de sessao ativa (str) ou None."""
+        try:
+            s = self.msf.client.call('session.list') or {}
+            if s:
+                return str(max(int(k) for k in s.keys()))
+        except Exception:
+            pass
+        return None
+
     def store_attack_experience(self, extra=None):
         """#2 — grava no RAG os parametros/resultado do run (feedback loop).
 

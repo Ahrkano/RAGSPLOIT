@@ -13,6 +13,7 @@ class MetasploitClient:
         
         self.client = None
         self.cid = None
+        self._verified = {}
         
         for attempt in range(max_retries):
             try:
@@ -53,30 +54,45 @@ class MetasploitClient:
         # 3. Reconstroi o texto limpo
         return "\n".join(lines)
 
-    def execute_command(self, command, timeout=10):
-        self.client.consoles.console(self.cid).write(command + "\n")
+    def execute_command(self, command, timeout=20, done_marker=None):
+        """Le o console ate concluir. Se done_marker for dado, encerra ao
+        ve-lo na saida (ex.: login scanners imprimem "% complete"); senao,
+        encerra quando o console fica ocioso (sem busy e sem dados novos).
+        O flag busy e instavel logo apos o write, por isso a dupla checagem."""
+        console = self.client.consoles.console(self.cid)
+        console.write(command + "\n")
         data = ""
-        elapsed = 0
+        elapsed = 0.0
+        idle = 0
+        time.sleep(0.5)
         while elapsed < timeout:
-            output = self.client.consoles.console(self.cid).read()
-            if output['data']:
-                data += output['data']
-            
-            # Se ja retornou o prompt do msf, provavelmente acabou
-            if output.get('prompt'):
+            output = console.read()
+            chunk = output.get('data', '') or ''
+            data += chunk
+            if done_marker and done_marker in data:
                 break
-                
-            time.sleep(1)
-            elapsed += 1
-            
+            busy = output.get('busy', False)
+            if busy or chunk:
+                idle = 0
+            else:
+                idle += 1
+            if idle >= 3:
+                break
+            time.sleep(1.0)
+            elapsed += 1.0
         return self._clean_output(data)
 
     def verify_module_exists(self, module_type, module_name):
+        key = f"{module_type}/{module_name}"
+        if key in self._verified:
+            return self._verified[key]
         try:
             self.client.modules.use(module_type, module_name)
-            return True
-        except:
-            return False
+            ok = True
+        except Exception:
+            ok = False
+        self._verified[key] = ok
+        return ok
 
     def check_session(self):
         sessions = self.client.sessions.list
@@ -97,3 +113,24 @@ class MetasploitClient:
         full_cmd = "\n".join(cmds)
         print(f"[MSF] Executando: {module_type}/{module_name}")
         return self.execute_command(full_cmd, timeout=20)
+
+    def run_login_scanner(self, module_name, base_opts, userpass_file=None,
+                          user_file=None, pass_file=None, timeout=240):
+        """Login scanner eficiente: le a wordlist de ARQUIVO e roda UMA vez.
+        Os arquivos precisam existir no host do MSF (volume compartilhado)."""
+        mod = module_name.replace("auxiliary/", "").strip("/")
+        if not self.verify_module_exists("auxiliary", mod):
+            print(f"[MSF] Login scanner inexistente: {mod}")
+            return None
+        opts = dict(base_opts or {})
+        if userpass_file: opts["USERPASS_FILE"] = userpass_file
+        if user_file: opts["USER_FILE"] = user_file
+        if pass_file: opts["PASS_FILE"] = pass_file
+        opts.setdefault("STOP_ON_SUCCESS", "true")
+        opts.setdefault("BLANK_PASSWORDS", "false")
+        opts.setdefault("USER_AS_PASS", "true")
+        opts.setdefault("VERBOSE", "false")
+        opts.setdefault("BRUTEFORCE_SPEED", "4")
+        cmds = [f"use auxiliary/{mod}"] + [f"set {k} {v}" for k, v in opts.items()] + ["run -z"]
+        print(f"[MSF] Login scan (arquivo): auxiliary/{mod}")
+        return self.execute_command("\n".join(cmds), timeout=timeout, done_marker="% complete")
