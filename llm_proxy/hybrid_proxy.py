@@ -40,7 +40,7 @@ PROVIDER_ENV = {
 
 # Default por provedor quando o request nao especifica modelo.
 PROVIDER_DEFAULT_MODEL = {
-    "google": "gemini/gemini-1.5-flash",
+    "google": "gemini/gemini-3-flash-preview",
     "openai": "openai/gpt-4o-mini",
     "anthropic": "anthropic/claude-opus-5-5",
 }

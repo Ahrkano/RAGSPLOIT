@@ -15,7 +15,7 @@ class LLMClient:
 
         self.config = self._load_config()
         self.provider = self.config.get("provider", "google")
-        self.model_name = self.config.get("model", "gemini/gemini-1.5-flash")
+        self.model_name = self.config.get("model", "gemini/gemini-3-flash-preview")
         
         print(f"[LLM] Inicializando Cliente. Modo: {self.provider.upper()} | Modelo: {self.model_name}")
         
@@ -33,7 +33,7 @@ class LLMClient:
                 return json.load(f)
         except Exception as e:
             print(f"[LLM WARN] Falha ao ler config, usando defaults. Erro: {e}")
-            return {"provider": "google", "model": "gemini/gemini-1.5-flash"}
+            return {"provider": "google", "model": "gemini/gemini-3-flash-preview"}
 
     def ask(self, prompt, history=None):
 
