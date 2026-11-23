@@ -7,9 +7,10 @@ networks:
 
 services:
   core:
-    build: 
+    build:
       context: .
       dockerfile: ./core/Dockerfile
+    image: ragsploit/core:latest
     container_name: core_orchestrator
     # TRUQUE PARA MANTER O CONTAINER VIVO:
     command: tail -f /dev/null
@@ -74,6 +75,50 @@ services:
       - ./config:/app/config
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # Web UI (operacao pelo navegador). SEGURANCA: publish restrito a 127.0.0.1
+  # (nunca 0.0.0.0 publico) + auth basica. Herda a imagem do core (deps do
+  # pipeline) e lanca o pipeline em PTY para o terminal interativo no browser.
+  webui:
+    build:
+      context: .
+      dockerfile: ./webui/Dockerfile
+    image: ragsploit/webui:latest
+    container_name: ragsploit_webui
+    depends_on:
+      - core
+      - atk
+      - tgt
+      - localai-proxy
+    networks:
+      llm-rag_labnet:
+        ipv4_address: 192.168.70.60
+    ports:
+      - "127.0.0.1:8090:8090"
+    env_file:
+      - .env
+    environment:
+      LAB_LLM_URL: ${LAB_LLM_URL}
+      CHROMA_PERSIST_DIR: /app/data
+      ATK_RPC_URL: http://192.168.70.20:55553
+      NVD_API_KEY: ${NVD_API_KEY}
+      MSF_RPC_PASSWORD: ${MSF_RPC_PASSWORD:-msfpass}
+      WEBUI_USER: ${WEBUI_USER:-admin}
+      WEBUI_PASS: ${WEBUI_PASS:-ragsploit}
+      WEBUI_PORT: "8090"
+    volumes:
+      - ./data/vectorstore:/app/data
+      - ./src:/app/src
+      - ./config:/app/config
+      - ./.env:/app/.env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8090/health', timeout=3)"]
       interval: 30s
       timeout: 5s
       retries: 3

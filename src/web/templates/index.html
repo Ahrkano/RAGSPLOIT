@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% set nav = 'index' %}
+{% block title %}Dashboard{% endblock %}
+{% block body %}
+<h1>Dashboard</h1>
+<p class="hint">Painel de controle da ferramenta de pentest autonomo. Configure o
+provedor/modelo e o alvo, dispare o ataque e consulte os relatorios.</p>
+
+<div class="grid">
+  <div class="card"><div class="k">Alvo atual</div><div class="v">{{ st.target }}</div></div>
+  <div class="card"><div class="k">Provedor</div><div class="v">{{ st.provider }}</div></div>
+  <div class="card"><div class="k">Modelo</div><div class="v">{{ st.model_short or '—' }}</div></div>
+  <div class="card"><div class="k">temp / max_tokens</div>
+       <div class="v">{{ st.temperature }} / {{ st.max_tokens }}</div></div>
+</div>
+
+<div class="panel">
+  <h2>Chaves de API por provedor</h2>
+  <div class="grid">
+    {% for p in st.providers %}
+    <div class="card">
+      <div class="k">{{ p }}</div>
+      <div class="v">
+        {% if st.keys[p] %}<span class="pill ok">PRESENTE</span>
+        {% else %}<span class="pill no">AUSENTE</span>{% endif %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  <p class="hint">Chaves ausentes podem ser cadastradas em <a href="/config">Config</a>.</p>
+</div>
+
+<div class="panel">
+  <h2>Acoes rapidas</h2>
+  <div class="row">
+    <a class="btn" href="/config">Configurar modelo / alvo</a>
+    <a class="btn" href="/run">Iniciar ataque</a>
+    <a class="btn" href="/reports">Ver relatorios</a>
+  </div>
+</div>
+{% endblock %}

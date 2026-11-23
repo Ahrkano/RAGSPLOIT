@@ -173,6 +173,28 @@ Esta seção descreve os procedimentos necessários para reproduzir as principai
   ```
 - **Resultado Esperado:** Exibição de um arquivo de texto estruturado contendo a marcação cronológica da data de execução, a lista completa de portas identificadas abertas no host alvo, o histórico detalhado de decisões táticas tomadas pelo motor de IA e as evidências técnicas e strings de identificação do sistema (`hostname`) extraídas do alvo após o comprometimento bem-sucedido.
 
+# Interface Web (Web UI)
+
+Além da TUI (`src/menu.py`), a ferramenta pode ser operada pelo navegador com menus interativos.
+
+**Serviço:** `webui` (container `ragsploit_webui`), na rede do laboratório (`192.168.70.60`).
+
+**Segurança:** o serviço é publicado **apenas em `127.0.0.1:8090`** (nunca exposto publicamente) e protegido por **autenticação básica** (`WEBUI_USER`/`WEBUI_PASS`, padrão `admin`/`ragsploit`; defina-os no `.env`). É uma ferramenta ofensiva — não altere o bind para `0.0.0.0`.
+
+**Subir:**
+```bash
+docker compose build core      # garante a imagem base ragsploit/core:latest
+docker compose build webui
+docker compose up -d webui
+```
+Acesse `http://127.0.0.1:8090` e autentique.
+
+**Páginas:**
+- **Dashboard** — estado atual (alvo, provedor, modelo, presença de chaves).
+- **Config** — escolher provedor/modelo (lista ao vivo da API do provedor), cadastrar chave de API (salva no `.env`) e definir o alvo (salva em `config/target.json`).
+- **Run** — dispara o pipeline num **terminal real (PTY + WebSocket + xterm.js)**: a saída aparece ao vivo e, ao entrar no shell interativo pós-exploração, basta digitar na mesma janela.
+- **Reports** — lista os logs `.txt` de execução e (re)gera/serve o relatório HTML consolidado.
+
 # LICENSE
 
 Este artefato é distribuído sob a Licença MIT (ou licença específica acordada com a instituição de pesquisa). O uso dos componentes para testes fora de escopos laboratoriais controlados e não autorizados é estritamente proibido.

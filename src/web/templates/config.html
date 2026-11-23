@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+{% set nav = 'config' %}
+{% block title %}Config{% endblock %}
+{% block body %}
+<h1>Configuracao</h1>
+
+<div class="msg" id="msg"></div>
+
+<div class="panel">
+  <h2>Modelo neural</h2>
+  <div class="row">
+    <div>
+      <label>Provedor</label>
+      <select id="provider">
+        {% for p in st.providers %}
+        <option value="{{ p }}" {{ 'selected' if p==st.provider }}>{{ p }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div>
+      <label>Modelo <span class="hint" id="modelhint"></span></label>
+      <select id="model"><option>carregando...</option></select>
+    </div>
+    <div style="flex:0 0 auto">
+      <label>&nbsp;</label>
+      <button id="btnSaveModel">Salvar modelo</button>
+    </div>
+  </div>
+  <p class="hint">Atual: <code>{{ st.model or '—' }}</code>. A lista vem da API do
+  provedor (requer chave valida). Sem chave, cadastre-a abaixo.</p>
+</div>
+
+<div class="panel">
+  <h2>Chave de API</h2>
+  <div class="row">
+    <div>
+      <label>Provedor</label>
+      <select id="keyProvider">
+        {% for p in st.providers %}
+        <option value="{{ p }}">{{ p }}{{ ' (tem chave)' if st.keys[p] else '' }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div>
+      <label>Chave (salva no .env)</label>
+      <input type="password" id="apiKey" placeholder="cole a chave aqui">
+    </div>
+    <div style="flex:0 0 auto">
+      <label>&nbsp;</label>
+      <button id="btnSaveKey">Salvar chave</button>
+    </div>
+  </div>
+</div>
+
+<div class="panel">
+  <h2>Alvo</h2>
+  <div class="row">
+    <div>
+      <label>IP do alvo</label>
+      <input type="text" id="target" value="{{ st.target }}" placeholder="{{ st.default_target }}">
+    </div>
+    <div style="flex:0 0 auto">
+      <label>&nbsp;</label>
+      <button id="btnSaveTarget">Salvar alvo</button>
+    </div>
+  </div>
+  <p class="hint">Gravado em <code>config/target.json</code>; usado pelo pipeline
+  quando <code>--target</code> nao e passado.</p>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+function flash(ok, text){
+  const m = $("#msg"); m.className = "msg " + (ok?"ok":"err"); m.textContent = text;
+  setTimeout(()=>{ m.className="msg"; }, 4000);
+}
+async function post(body){
+  const r = await fetch("/api/config", {method:"POST",
+    headers:{"Content-Type":"application/json"}, body:JSON.stringify(body)});
+  return {status:r.status, data: await r.json()};
+}
+async function loadModels(provider){
+  const sel = $("#model"); sel.innerHTML = "<option>carregando...</option>";
+  $("#modelhint").textContent = "";
+  const r = await fetch("/api/models?provider="+encodeURIComponent(provider));
+  const d = await r.json();
+  sel.innerHTML = "";
+  if(d.error || !d.models || !d.models.length){
+    $("#modelhint").textContent = d.error ? ("("+d.error+")") : "(nenhum modelo listado)";
+    const o = document.createElement("option");
+    o.value=""; o.textContent="(digite manualmente abaixo)"; sel.appendChild(o);
+    sel.insertAdjacentHTML("afterend",
+      '<input type="text" id="modelManual" placeholder="ex: gemini-3-flash-preview" '
+      +'style="margin-top:8px">');
+    return;
+  }
+  const cur = {{ st.model_short|tojson }};
+  d.models.forEach(m=>{
+    const o=document.createElement("option"); o.value=m; o.textContent=m;
+    if(m===cur) o.selected=true; sel.appendChild(o);
+  });
+}
+$("#provider").addEventListener("change", e=>loadModels(e.target.value));
+$("#btnSaveModel").addEventListener("click", async ()=>{
+  const provider=$("#provider").value;
+  let model=$("#model").value;
+  const manual=$("#modelManual"); if((!model) && manual) model=manual.value.trim();
+  if(!model) return flash(false,"Escolha ou digite um modelo.");
+  const {status,data}=await post({action:"set_model",provider,model});
+  flash(status===200 && data.ok, status===200?("Modelo salvo: "+data.model):(data.error||"erro"));
+});
+$("#btnSaveKey").addEventListener("click", async ()=>{
+  const provider=$("#keyProvider").value, api_key=$("#apiKey").value.trim();
+  if(!api_key) return flash(false,"Informe a chave.");
+  const {status,data}=await post({action:"set_key",provider,api_key});
+  if(status===200 && data.ok){ flash(true,"Chave salva no .env."); $("#apiKey").value="";
+    if(provider===$("#provider").value) loadModels(provider); }
+  else flash(false, data.error||"erro ao salvar chave");
+});
+$("#btnSaveTarget").addEventListener("click", async ()=>{
+  const target=$("#target").value.trim();
+  const {status,data}=await post({action:"set_target",target});
+  flash(status===200 && data.ok, status===200?("Alvo salvo: "+data.target):(data.error||"erro"));
+});
+loadModels($("#provider").value);
+</script>
+{% endblock %}
