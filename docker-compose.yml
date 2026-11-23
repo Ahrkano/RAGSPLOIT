@@ -110,6 +110,10 @@ services:
       WEBUI_USER: ${WEBUI_USER:-admin}
       WEBUI_PASS: ${WEBUI_PASS:-ragsploit}
       WEBUI_PORT: "8090"
+      # Scheduler de CVEs (#4): atualiza a base a cada N horas.
+      CVE_AUTO_UPDATE: ${CVE_AUTO_UPDATE:-true}
+      CVE_UPDATE_HOURS: ${CVE_UPDATE_HOURS:-12}
+      CVE_RUN_AT_START: ${CVE_RUN_AT_START:-false}
     volumes:
       - ./data/vectorstore:/app/data
       - ./src:/app/src

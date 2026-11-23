@@ -472,6 +472,7 @@ class PentestPipeline(PipelineBase):
                 break
         
         if self.session_id: self.phase_4_post_exploitation()
+        self.store_attack_experience()
         self.generate_text_report()
 
     def phase_4_post_exploitation(self):

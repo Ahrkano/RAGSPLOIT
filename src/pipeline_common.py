@@ -98,6 +98,36 @@ class PipelineBase:
         except Exception:
             pass
 
+    def store_attack_experience(self, extra=None):
+        """#2 — grava no RAG os parametros/resultado do run (feedback loop).
+
+        Usa atributos ja presentes no pipeline (rag, target_ip, session_id,
+        history, open_ports) para montar um 'ATTACK EXPERIENCE CARD' que fica
+        disponivel para runs futuros."""
+        rag = getattr(self, "rag", None)
+        if rag is None:
+            return
+        import datetime
+        success = bool(getattr(self, "session_id", None))
+        hist = getattr(self, "history", []) or []
+        modules = [h for h in hist if ("via" in h) or ("SUCESSO" in h)]
+        record = {
+            "timestamp": datetime.datetime.now().isoformat(timespec="seconds"),
+            "target": getattr(self, "target_ip", ""),
+            "lhost": getattr(self, "attacker_ip", ""),
+            "port": ",".join(str(p) for p in (getattr(self, "open_ports", {}) or {}).keys()),
+            "result": "success" if success else "fail",
+            "session": getattr(self, "session_id", None),
+            "note": " | ".join(modules[-5:]) if modules else "sem modulos registrados",
+        }
+        if extra:
+            record.update(extra)
+        try:
+            rag.ingest_experience(record)
+            print("[RAG] Experiencia do ataque gravada no conhecimento (feedback #2).")
+        except Exception as e:
+            print(f"[RAG] Falha ao gravar experiencia: {e}")
+
     def ask_llm_robust(self, prompt, max_retries=3):
         for attempt in range(max_retries):
             try:

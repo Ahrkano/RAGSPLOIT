@@ -45,10 +45,15 @@ if BASE not in sys.path:
 
 from src import model_selector as ms          # noqa: E402
 from src.pipeline_common import resolve_target, save_target, DEFAULT_TARGET  # noqa: E402
+from src import cve_scheduler                   # noqa: E402
 
 LOGS_DIR = "/app/data/logs"
 REPORT_FILE = "/app/data/pentest_report.html"
 GENERATE_REPORT = os.path.join(SRC, "generate_report.py")
+RAG_ADMIN = os.path.join(SRC, "rag_admin.py")
+VSTORE = os.getenv("CHROMA_PERSIST_DIR", "/app/data")
+CVE_FILE = "/app/config/ingest/kb_recent_threats.txt"
+CVE_STATE = os.path.join(LOGS_DIR, "cve_last_update.json")
 
 # Pipelines de alvo unico que aceitam --target (allowlist — nunca executamos
 # caminho arbitrario vindo do cliente).
@@ -65,6 +70,82 @@ WS_TOKEN = secrets.token_urlsafe(24)
 
 app = Flask(__name__, template_folder=os.path.join(os.path.dirname(__file__), "templates"))
 sock = Sock(app)
+
+# Operacoes de base de conhecimento (reset/update) podem demorar (ingestao +
+# embeddings), entao rodam numa thread unica de background.
+_JOB = {"running": False, "name": None, "result": None, "started": None, "finished": None}
+_JOB_LOCK = threading.Lock()
+
+
+def _run_job(name, fn):
+    with _JOB_LOCK:
+        if _JOB["running"]:
+            return False
+        _JOB.update(running=True, name=name, result=None,
+                    started=datetime_now(), finished=None)
+
+    def worker():
+        try:
+            res = fn()
+        except Exception as e:
+            res = {"ok": False, "error": str(e)}
+        with _JOB_LOCK:
+            _JOB.update(running=False, result=res, finished=datetime_now())
+
+    threading.Thread(target=worker, daemon=True, name=f"job-{name}").start()
+    return True
+
+
+def datetime_now():
+    import datetime as _d
+    return _d.datetime.now().isoformat(timespec="seconds")
+
+
+def _rag_cli(args, timeout=1800):
+    """Executa src/rag_admin.py em SUBPROCESSO e devolve o JSON-marcador.
+
+    Toda interacao com o ChromaDB acontece em processo separado: o ChromaDB
+    e singleton por processo e o langchain_chroma colide com qualquer outro
+    client aberto no mesmo processo (ex.: o da Web UI). O subprocesso isola isso.
+    """
+    try:
+        r = subprocess.run([sys.executable, RAG_ADMIN] + args, cwd=BASE,
+                           env=os.environ.copy(), capture_output=True,
+                           text=True, timeout=timeout)
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+    for line in reversed((r.stdout or "").splitlines()):
+        if line.startswith("RAGADMIN_JSON:"):
+            try:
+                return json.loads(line[len("RAGADMIN_JSON:"):])
+            except Exception:
+                break
+    return {"ok": r.returncode == 0, "stderr": (r.stderr or "")[-500:],
+            "stdout_tail": (r.stdout or "")[-500:]}
+
+
+def _light_stats():
+    """Stats sem abrir o ChromaDB (usado enquanto um job esta rodando)."""
+    emb_dir = os.path.join(VSTORE, "emb_cache")
+    try:
+        emb = len(os.listdir(emb_dir)) if os.path.isdir(emb_dir) else 0
+    except Exception:
+        emb = -1
+    state = {}
+    try:
+        with open(CVE_STATE) as f:
+            state = json.load(f)
+    except Exception:
+        pass
+    return {
+        "doc_count": "(ocupado)",
+        "emb_cache_entries": emb,
+        "cve_file_exists": os.path.exists(CVE_FILE),
+        "cve_file_mtime": (int(os.path.getmtime(CVE_FILE))
+                           if os.path.exists(CVE_FILE) else None),
+        "last_cve_update": state.get("last_cve_update"),
+        "last_reset": state.get("last_reset"),
+    }
 
 
 def _check_basic_auth(auth):
@@ -133,6 +214,11 @@ def reports_page():
         "reports.html", st=current_state(), logs=logs,
         has_html=os.path.exists(REPORT_FILE),
     )
+
+
+@app.route("/knowledge")
+def knowledge_page():
+    return render_template("knowledge.html", st=current_state())
 
 
 @app.route("/health")
@@ -242,6 +328,47 @@ def report_html():
     if not os.path.exists(REPORT_FILE):
         abort(404)
     return send_file(REPORT_FILE, mimetype="text/html")
+
+
+# --- API: base de conhecimento (RAG / CVE) e telemetria LLM ---
+@app.route("/api/rag/stats")
+def api_rag_stats():
+    with _JOB_LOCK:
+        running = _JOB["running"]
+        job = {k: _JOB[k] for k in ("running", "name", "started", "finished", "result")}
+    # Enquanto um job roda, nao abrir o ChromaDB (evita lock concorrente).
+    stats = _light_stats() if running else _rag_cli(["stats"], timeout=60)
+    return jsonify({"stats": stats, "job": job}), 200
+
+
+@app.route("/api/cve/update", methods=["POST"])
+def api_cve_update():
+    started = _run_job("update-cves", lambda: _rag_cli(["update-cves"], timeout=300))
+    return jsonify({"started": started,
+                    "msg": "atualizacao de CVEs iniciada" if started
+                    else "ja existe uma operacao em andamento"}), (202 if started else 409)
+
+
+@app.route("/api/rag/reset", methods=["POST"])
+def api_rag_reset():
+    data = request.get_json(silent=True) or {}
+    args = ["reset"] if data.get("fetch_cves", True) else ["reset", "--no-cves"]
+    started = _run_job("reset", lambda: _rag_cli(args, timeout=1800))
+    return jsonify({"started": started,
+                    "msg": "reset do RAG iniciado" if started
+                    else "ja existe uma operacao em andamento"}), (202 if started else 409)
+
+
+@app.route("/api/llm/metrics")
+def api_llm_metrics():
+    from src.llm_metrics import LATEST
+    if not os.path.exists(LATEST):
+        return jsonify({"available": False}), 200
+    try:
+        with open(LATEST) as f:
+            return jsonify({"available": True, "metrics": json.load(f)}), 200
+    except Exception as e:
+        return jsonify({"available": False, "error": str(e)}), 200
 
 
 # --- WebSocket: PTY do pipeline ---
@@ -354,4 +481,14 @@ if __name__ == "__main__":
     port = int(os.getenv("WEBUI_PORT", "8090"))
     print(f"[WEBUI] RAGSPLOIT Web UI em 0.0.0.0:{port} (publish restrito no compose)")
     print(f"[WEBUI] user={WEBUI_USER}  (senha via WEBUI_PASS)")
+
+    # Scheduler de CVEs (#4): atualiza a base a cada N horas (padrao 12).
+    if os.getenv("CVE_AUTO_UPDATE", "true").lower() in ("1", "true", "yes", "on"):
+        hrs = float(os.getenv("CVE_UPDATE_HOURS", "12"))
+        at_start = os.getenv("CVE_RUN_AT_START", "false").lower() in ("1", "true", "yes", "on")
+        try:
+            cve_scheduler.start_background(interval_hours=hrs, run_at_start=at_start)
+        except Exception as e:
+            print(f"[WEBUI] scheduler de CVE nao iniciado: {e}")
+
     app.run(host="0.0.0.0", port=port, threaded=True)

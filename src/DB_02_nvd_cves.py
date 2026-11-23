@@ -76,6 +76,11 @@ def main():
     headers = {
         "User-Agent": "Pentest-Lab-RAG/1.0 (Educational)"
     }
+    # Usa a chave do NVD quando disponivel (eleva o rate-limit da API).
+    _nvd_key = os.getenv("NVD_API_KEY")
+    if _nvd_key:
+        headers["apiKey"] = _nvd_key
+        print("[DB_02] Usando NVD_API_KEY.")
     
     print(f"[*] Consultando NVD de {params['pubStartDate'][:10]} ate {params['pubEndDate'][:10]}...")
     

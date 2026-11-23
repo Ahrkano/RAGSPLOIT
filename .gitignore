@@ -30,6 +30,7 @@ chroma_data/
 vector_db/
 data/vectorstore/logs/
 data/vectorstore/chromadb/
+data/vectorstore/emb_cache/
 data/vectorstore/chroma.sqlite3
 
 # ===== Docker =====

@@ -1,0 +1,106 @@
+{% extends "base.html" %}
+{% set nav = 'knowledge' %}
+{% block title %}Knowledge{% endblock %}
+{% block body %}
+<h1>Base de Conhecimento (RAG / CVE)</h1>
+
+<div class="msg" id="msg"></div>
+
+<div class="panel">
+  <h2>Estado da base <span class="hint" id="jobState"></span></h2>
+  <div class="grid">
+    <div class="card"><div class="k">Documentos (vetores)</div><div class="v" id="docCount">—</div></div>
+    <div class="card"><div class="k">Cache de embeddings (#1)</div><div class="v" id="embCache">—</div></div>
+    <div class="card"><div class="k">Última atualização CVE</div><div class="v" id="lastCve">—</div></div>
+    <div class="card"><div class="k">Último reset</div><div class="v" id="lastReset">—</div></div>
+  </div>
+</div>
+
+<div class="panel">
+  <h2>Ações</h2>
+  <div class="row">
+    <div style="flex:0 0 auto">
+      <button id="btnCve">Atualizar CVEs agora (#4)</button>
+      <span class="hint">O scheduler também roda a cada 12h automaticamente.</span>
+    </div>
+  </div>
+  <hr style="border-color:var(--border);margin:16px 0">
+  <div class="row">
+    <label style="flex:0 0 auto;align-self:center">
+      <input type="checkbox" id="fetchCves" style="width:auto" checked> rebuscar CVEs no reset
+    </label>
+    <div style="flex:0 0 auto">
+      <button id="btnReset" class="danger">Resetar RAG (#5)</button>
+      <span class="hint">Apaga o banco vetorial e reconstrói a partir de
+      <code>config/ingest/*.txt</code> (+ API de CVEs). O cache de embeddings é preservado.</span>
+    </div>
+  </div>
+</div>
+
+<div class="panel">
+  <h2>Telemetria do LLM no último ataque (#3)</h2>
+  <div id="noMetrics" class="hint">Nenhuma métrica ainda. Rode um ataque em <a href="/run">Run</a>.</div>
+  <div class="grid" id="metricsGrid" style="display:none">
+    <div class="card"><div class="k">Provider / Modelo</div><div class="v" id="mModel">—</div></div>
+    <div class="card"><div class="k">Chamadas (erros)</div><div class="v" id="mCalls">—</div></div>
+    <div class="card"><div class="k">Acurácia (JSON válido)</div><div class="v" id="mAcc">—</div></div>
+    <div class="card"><div class="k">Sucesso</div><div class="v" id="mSucc">—</div></div>
+    <div class="card"><div class="k">Latência média</div><div class="v" id="mAvg">—</div></div>
+    <div class="card"><div class="k">Latência p95 / máx</div><div class="v" id="mP95">—</div></div>
+    <div class="card"><div class="k">Tempo total de inferência</div><div class="v" id="mTot">—</div></div>
+    <div class="card"><div class="k">Tokens (total)</div><div class="v" id="mTok">—</div></div>
+  </div>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+function flash(ok,text){ const m=$("#msg"); m.className="msg "+(ok?"ok":"err"); m.textContent=text;
+  setTimeout(()=>{m.className="msg";},6000); }
+function fmtTime(ts){ if(!ts) return "—"; const d=new Date(ts*1000); return d.toLocaleString(); }
+
+async function refreshStats(){
+  const r = await fetch("/api/rag/stats"); const d = await r.json();
+  const s = d.stats;
+  $("#docCount").textContent = s.doc_count;
+  $("#embCache").textContent = s.emb_cache_entries;
+  $("#lastCve").textContent = s.last_cve_update || fmtTime(s.cve_file_mtime);
+  $("#lastReset").textContent = s.last_reset || "—";
+  const job = d.job;
+  const running = job.running;
+  $("#jobState").textContent = running ? ("· executando: "+job.name+"…")
+                    : (job.result ? "· última op concluída" : "");
+  $("#btnCve").disabled = running; $("#btnReset").disabled = running;
+  if(running){ setTimeout(refreshStats, 3000); }
+  else if(job.result && job.result.ok===false && job.result.error){
+    flash(false, "job falhou: "+job.result.error);
+  }
+}
+async function refreshMetrics(){
+  const r = await fetch("/api/llm/metrics"); const d = await r.json();
+  if(!d.available){ $("#noMetrics").style.display="block"; $("#metricsGrid").style.display="none"; return; }
+  const m = d.metrics;
+  $("#noMetrics").style.display="none"; $("#metricsGrid").style.display="grid";
+  $("#mModel").textContent = (m.provider||"?")+" / "+(m.model||"?");
+  $("#mCalls").textContent = m.calls+" ("+m.errors+")";
+  $("#mAcc").textContent = (m.json_valid_rate*100).toFixed(1)+"%";
+  $("#mSucc").textContent = (m.success_rate*100).toFixed(1)+"%";
+  $("#mAvg").textContent = m.latency_avg_s+"s";
+  $("#mP95").textContent = m.latency_p95_s+"s / "+m.latency_max_s+"s";
+  $("#mTot").textContent = m.latency_total_s+"s";
+  $("#mTok").textContent = m.total_tokens || "—";
+}
+$("#btnCve").addEventListener("click", async ()=>{
+  const r = await fetch("/api/cve/update", {method:"POST"});
+  flash(r.status===202, (await r.json()).msg); refreshStats();
+});
+$("#btnReset").addEventListener("click", async ()=>{
+  if(!confirm("Resetar a base do RAG? O banco vetorial será apagado e reconstruído.")) return;
+  const fetch_cves = $("#fetchCves").checked;
+  const r = await fetch("/api/rag/reset", {method:"POST",
+    headers:{"Content-Type":"application/json"}, body:JSON.stringify({fetch_cves})});
+  flash(r.status===202, (await r.json()).msg); refreshStats();
+});
+refreshStats(); refreshMetrics();
+setInterval(refreshMetrics, 10000);
+</script>
+{% endblock %}
