@@ -40,10 +40,14 @@ MODELS_TO_TEST = [
 ]
 
 def update_ai_settings(model_name):
-    config = {
-        "provider": "google",
-        "model": f"gemini/{model_name}"
-    }
+    config = {}
+    try:
+        with open(CONFIG_FILE) as _cf: config = json.load(_cf)
+    except Exception: pass
+    config.setdefault("provider", "google")
+    config["model"] = f"gemini/{model_name}"
+    config.setdefault("temperature", 0.1)
+    config.setdefault("max_tokens", 2000)
     os.makedirs(os.path.dirname(CONFIG_FILE), exist_ok=True)
     with open(CONFIG_FILE, 'w') as f:
         json.dump(config, f, indent=4)

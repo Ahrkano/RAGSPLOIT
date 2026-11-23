@@ -11,7 +11,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # Tenta pegar settings, senao define caminho padrao
 try:
     from config import settings
-    OUTPUT_FILE = os.path.join(settings.DATA_PATH, "../config/ingest/kb_recent_threats.txt")
+    OUTPUT_FILE = os.path.join(settings.DATA_PATH, "kb_recent_threats.txt")
 except:
     OUTPUT_FILE = "/app/config/ingest/kb_recent_threats.txt"
 
