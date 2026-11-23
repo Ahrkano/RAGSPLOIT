@@ -18,6 +18,7 @@ os.environ["ANONYMIZED_TELEMETRY"] = "False"
 from src.metasploit_client import MetasploitClient
 from src.llm_client import LLMClient
 from src.rag_engine import RagEngine
+from src.pipeline_common import PipelineBase
 
 # --- COLORS ---
 C_RED, C_GREEN, C_YELLOW, C_BLUE, C_RESET = "\033[91m", "\033[92m", "\033[93m", "\033[94m", "\033[0m"
@@ -26,7 +27,7 @@ C_BOLD, C_CYAN, C_MAGENTA = "\033[1m", "\033[96m", "\033[95m"
 LOOT_DIR = "/app/data/logs"
 os.makedirs(LOOT_DIR, exist_ok=True)
 
-class PentestMultiTarget:
+class PentestMultiTarget(PipelineBase):
     def __init__(self, network_cidr, attacker_ip, test_mode=False):
         self.network_cidr = network_cidr
         self.attacker_ip = attacker_ip
@@ -56,15 +57,6 @@ class PentestMultiTarget:
         self.target_ip_escolhido = None
         self.history = []
         self.evidence = {}
-
-    def ask_llm_robust(self, prompt, max_retries=3):
-        for attempt in range(max_retries):
-            try:
-                resp = self.llm.ask(prompt, history=[]).replace("```json", "").replace("```", "").strip()
-                if resp: return resp
-            except Exception as e:
-                time.sleep((attempt + 1) * 2)
-        return None
 
     def is_host_alive(self, ip):
         """TCP Ping Sweep rapido para pular IPs inativos e evitar Blackhole Routing"""
