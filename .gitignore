@@ -51,6 +51,11 @@ sessions/
 loot/
 data/vectorstore/wordlists/.cache/
 
-# ===== Dados de CVE gerados em runtime (coletor NVD/CIRCL/MITRE) =====
-# Regenerado pelo scheduler/orchestrator; nao versionar para evitar churn.
+# ===== Ingest gerado pelos coletores (DB_*.py / cve_sources) =====
+# Regenerado em runtime pelo scheduler/orchestrator_db; nao versionar
+# para evitar churn (CVEs atualizados, CRLF no Windows, etc.).
 config/ingest/kb_recent_threats.txt
+config/ingest/metasploit_knowledge.txt
+config/ingest/kb_tactical.txt
+config/ingest/kb_payloads.txt
+config/ingest/kb_post_exploit.txt
