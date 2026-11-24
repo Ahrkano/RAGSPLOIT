@@ -657,7 +657,9 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     target = resolve_target(args.target)
-    lhost = get_best_route_ip(target)
+    # LHOST deve ser a caixa onde o handler do Metasploit (msfrpcd) roda,
+    # nao o orquestrador: o reverse shell do alvo volta para o MSF host.
+    lhost = os.getenv("MSF_RPC_HOST", "192.168.70.20")
 
     p = PentestPipeline(target_ip=target, attacker_ip=lhost, use_rag=not args.disable_rag, only_port=args.port)
     try:
