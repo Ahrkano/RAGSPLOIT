@@ -179,3 +179,13 @@ class MetasploitClient:
             return out
         except Exception as e:
             return f"[loadpath erro] {e}"
+
+    def module_option_names(self, module_type, module_name):
+        """Nomes das opcoes que um modulo aceita (p/ injetar credenciais apenas
+        quando o modulo realmente tem USERNAME/PASSWORD/SMBUser/etc)."""
+        mod = module_name.replace(f"{module_type}/", "").strip("/")
+        try:
+            m = self.client.modules.use(module_type, mod)
+            return list(m.options)
+        except Exception:
+            return []

