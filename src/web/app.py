@@ -502,10 +502,65 @@ def _pct(values, p):
     return s[k]
 
 
+def _new_bucket():
+    return {"runs": 0, "pwned": 0, "calls": 0, "ok": 0, "json_valid": 0,
+            "latencies": [], "tokens": 0, "rag_on": 0, "rag_off": 0,
+            "models": set()}
+
+
+def _add_to_bucket(b, rec, m):
+    b["runs"] += 1
+    if rec.get("pwned"):
+        b["pwned"] += 1
+    b["calls"] += int(m.get("calls") or 0)
+    b["ok"] += int(m.get("ok") or 0)
+    b["json_valid"] += int(m.get("json_valid") or 0)
+    b["tokens"] += int(m.get("total_tokens") or 0)
+    b["latencies"] += [float(x) for x in (rec.get("latencies") or [])]
+    if rec.get("model"):
+        b["models"].add(rec["model"])
+    re_flag = rec.get("rag_enabled")
+    if re_flag is True:
+        b["rag_on"] += 1
+    elif re_flag is False:
+        b["rag_off"] += 1
+
+
+def _summarize_bucket(b):
+    lats = b["latencies"]
+    n = len(lats)
+    calls = b["calls"]
+    return {
+        "runs": b["runs"],
+        "pwned": b["pwned"],
+        "attack_success_rate": round(b["pwned"] / b["runs"], 3) if b["runs"] else None,
+        "calls": calls,
+        "accuracy": round(b["json_valid"] / calls, 3) if calls else None,
+        "llm_success_rate": round(b["ok"] / calls, 3) if calls else None,
+        "llm_error_rate": round(1 - b["ok"] / calls, 3) if calls else None,
+        "latency_avg": round(sum(lats) / n, 3) if n else None,
+        "latency_std": (round(statistics.pstdev(lats), 3) if n > 1
+                        else (0.0 if n == 1 else None)),
+        "latency_p95": round(_pct(lats, 95), 3) if n else None,
+        "latency_min": round(min(lats), 3) if n else None,
+        "latency_max": round(max(lats), 3) if n else None,
+        "tokens": b["tokens"] or None,
+        "rag_on": b["rag_on"],
+        "rag_off": b["rag_off"],
+        "models": sorted(b["models"]),
+    }
+
+
+def _short_model(name):
+    """Rotulo curto de modelo: remove prefixo de provedor (gemini/, openai/,
+    anthropic/) p/ exibicao. 'anthropic/claude-opus-4-8' -> 'claude-opus-4-8'."""
+    s = (name or "").strip()
+    return s.split("/", 1)[1] if "/" in s else s
+
+
 def _collect_stats():
-    buckets = {p: {"runs": 0, "pwned": 0, "calls": 0, "ok": 0, "json_valid": 0,
-                   "latencies": [], "tokens": 0, "rag_on": 0, "rag_off": 0,
-                   "models": set()} for p in _PROVIDERS}
+    buckets = {p: _new_bucket() for p in _PROVIDERS}
+    model_buckets = {}   # chave: nome cru do modelo -> bucket (+ provider)
     total = classified = 0
     for f in glob.glob(os.path.join(LOGS_DIR, "runstats_*.json")):
         try:
@@ -520,49 +575,28 @@ def _collect_stats():
         if prov is None:
             continue
         classified += 1
-        b = buckets[prov]
-        b["runs"] += 1
-        if rec.get("pwned"):
-            b["pwned"] += 1
         m = rec.get("metrics") or {}
-        b["calls"] += int(m.get("calls") or 0)
-        b["ok"] += int(m.get("ok") or 0)
-        b["json_valid"] += int(m.get("json_valid") or 0)
-        b["tokens"] += int(m.get("total_tokens") or 0)
-        b["latencies"] += [float(x) for x in (rec.get("latencies") or [])]
-        if rec.get("model"):
-            b["models"].add(rec["model"])
-        re_flag = rec.get("rag_enabled")
-        if re_flag is True:
-            b["rag_on"] += 1
-        elif re_flag is False:
-            b["rag_off"] += 1
-    out = {}
-    for p in _PROVIDERS:
-        b = buckets[p]
-        lats = b["latencies"]
-        n = len(lats)
-        calls = b["calls"]
-        out[p] = {
-            "runs": b["runs"],
-            "pwned": b["pwned"],
-            "attack_success_rate": round(b["pwned"] / b["runs"], 3) if b["runs"] else None,
-            "calls": calls,
-            "accuracy": round(b["json_valid"] / calls, 3) if calls else None,
-            "llm_success_rate": round(b["ok"] / calls, 3) if calls else None,
-            "llm_error_rate": round(1 - b["ok"] / calls, 3) if calls else None,
-            "latency_avg": round(sum(lats) / n, 3) if n else None,
-            "latency_std": (round(statistics.pstdev(lats), 3) if n > 1
-                            else (0.0 if n == 1 else None)),
-            "latency_p95": round(_pct(lats, 95), 3) if n else None,
-            "latency_min": round(min(lats), 3) if n else None,
-            "latency_max": round(max(lats), 3) if n else None,
-            "tokens": b["tokens"] or None,
-            "rag_on": b["rag_on"],
-            "rag_off": b["rag_off"],
-            "models": sorted(b["models"]),
-        }
-    return {"providers": out, "order": _PROVIDERS,
+        _add_to_bucket(buckets[prov], rec, m)
+        model = (rec.get("model") or "desconhecido").strip() or "desconhecido"
+        mb = model_buckets.get(model)
+        if mb is None:
+            mb = model_buckets[model] = _new_bucket()
+            mb["_provider"] = prov
+        _add_to_bucket(mb, rec, m)
+
+    out = {p: _summarize_bucket(buckets[p]) for p in _PROVIDERS}
+
+    models = []
+    for name, mb in model_buckets.items():
+        row = _summarize_bucket(mb)
+        row["model"] = name
+        row["label"] = _short_model(name)
+        row["provider"] = mb.get("_provider")
+        models.append(row)
+    # mais usados primeiro, depois por nome
+    models.sort(key=lambda r: (-r["runs"], r["label"]))
+
+    return {"providers": out, "order": _PROVIDERS, "models": models,
             "total_runs": total, "classified_runs": classified}
 
 

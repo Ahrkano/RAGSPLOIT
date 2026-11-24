@@ -41,6 +41,16 @@
   .stat-col .mk{color:var(--muted)}
   .chart-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px;margin-top:16px}
   .chart-box{background:var(--panel2);border:1px solid var(--border);border-radius:8px;padding:10px;height:240px}
+
+  /* Tabela por modelo */
+  #modelTableWrap{overflow-x:auto;margin-top:6px}
+  .model-table{width:100%;border-collapse:collapse;font-size:12px;min-width:720px}
+  .model-table th,.model-table td{text-align:right;padding:6px 9px;border-bottom:1px solid #222;white-space:nowrap}
+  .model-table th{color:var(--muted);font-weight:normal;border-bottom:1px solid var(--border)}
+  .model-table td:first-child,.model-table th:first-child{text-align:left}
+  .model-table td.mname{color:var(--fg)}
+  .model-table .pdot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:4px;vertical-align:middle}
+  .model-table tbody tr:hover{background:var(--panel2)}
 </style>
 <script src="/static/vendor/chart.umd.min.js"></script>
 {% endblock %}
@@ -59,6 +69,25 @@
     <div class="chart-box"><canvas id="chAcc"></canvas></div>
     <div class="chart-box"><canvas id="chLat"></canvas></div>
     <div class="chart-box"><canvas id="chPwn"></canvas></div>
+  </div>
+
+  <h2 style="margin-top:22px">Por modelo</h2>
+  <p class="hint">Cada modelo especifico usado nos testes (ex.: gemini-3.5-flash,
+     gemma-4, claude-opus-4-8). Cor = provedor.</p>
+  <div id="modelTableWrap">
+    <table class="model-table" id="modelTable">
+      <thead><tr>
+        <th>Modelo</th><th>Prov.</th><th>Runs</th><th>PWNED</th>
+        <th>Sucesso ataque</th><th>Acuracia</th><th>Lat. media</th>
+        <th>Desvio</th><th>p95</th><th>Tokens</th><th>RAG on/off</th>
+      </tr></thead>
+      <tbody id="modelBody"></tbody>
+    </table>
+  </div>
+  <div class="chart-grid">
+    <div class="chart-box"><canvas id="chModelAcc"></canvas></div>
+    <div class="chart-box"><canvas id="chModelLat"></canvas></div>
+    <div class="chart-box"><canvas id="chModelPwn"></canvas></div>
   </div>
 </div>
 
@@ -202,6 +231,38 @@ async function loadStats(){
     mkBar("chAcc","Acuracia (JSON valido) %", L, L.map(p=>pv(d.providers[p].accuracy,100)), C);
     mkBar("chLat","Latencia media (s)",       L, L.map(p=>d.providers[p].latency_avg||0), C);
     mkBar("chPwn","Sucesso do ataque %",      L, L.map(p=>pv(d.providers[p].attack_success_rate,100)), C);
+  }
+
+  // --- Por modelo ---
+  const models = d.models || [];
+  const tb = $("#modelBody"); tb.innerHTML = "";
+  if(!models.length){
+    tb.innerHTML = '<tr><td colspan="11" class="hint">nenhum modelo classificado ainda</td></tr>';
+  } else {
+    models.forEach(mm=>{
+      const c = PROV_COLORS[mm.provider] || "#888";
+      const tr = document.createElement("tr");
+      tr.innerHTML =
+          `<td class="mname"><span class="pdot" style="background:${c}"></span>${mm.label}</td>`
+        + `<td>${mm.provider||"—"}</td>`
+        + `<td>${mm.runs}</td>`
+        + `<td>${mm.pwned}</td>`
+        + `<td>${pct(mm.attack_success_rate)}</td>`
+        + `<td>${pct(mm.accuracy)}</td>`
+        + `<td>${sfx(mm.latency_avg,"s")}</td>`
+        + `<td>${mm.latency_std==null?"—":("±"+mm.latency_std+"s")}</td>`
+        + `<td>${sfx(mm.latency_p95,"s")}</td>`
+        + `<td>${mm.tokens==null?"—":mm.tokens}</td>`
+        + `<td>${mm.rag_on} / ${mm.rag_off}</td>`;
+      tb.appendChild(tr);
+    });
+  }
+  if(typeof Chart !== "undefined" && models.length){
+    const ML = models.map(m=>m.label);
+    const MC = models.map(m=>PROV_COLORS[m.provider] || "#888");
+    mkBar("chModelAcc","Acuracia por modelo %",   ML, models.map(m=>pv(m.accuracy,100)), MC);
+    mkBar("chModelLat","Latencia media por modelo (s)", ML, models.map(m=>m.latency_avg||0), MC);
+    mkBar("chModelPwn","Sucesso do ataque por modelo %", ML, models.map(m=>pv(m.attack_success_rate,100)), MC);
   }
 }
 function mkBar(id,title,labels,data,colors){
