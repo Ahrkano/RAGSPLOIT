@@ -138,13 +138,13 @@ Esta seção descreve os procedimentos necessários para reproduzir as principai
 
 - **Comando do Cenário A (Com RAG - Alinhado):**
   ```bash
-  docker exec -it core_orchestrator python3 /app/src/pipe_rag_onoff.py --target 192.168.70.30 --port 139
+  docker exec -it core_orchestrator python3 /app/src/pipe_v4.py --target 192.168.70.30 --port 139
   ```
   *Expectativa de Resultado:* O framework recuperará as diretrizes operacionais do ChromaDB (conforme exibido no bloco `=== [RAG DEBUG] MEMORIA RECUPERADA ===`) e guiará a tática de ataque com base nos documentos injetados.
 
 - **Comando do Cenário B (Sem RAG - Baseline de Controle):**
   ```bash
-  docker exec -it core_orchestrator python3 /app/src/pipe_rag_onoff.py --target 192.168.70.30 --port 139 --disable-rag
+  docker exec -it core_orchestrator python3 /app/src/pipe_v4.py --target 192.168.70.30 --port 139 --disable-rag
   ```
   *Expectativa de Resultado:* O framework exibirá um aviso de RAG desativado. A IA tomará a decisão tática baseada unicamente em seu conhecimento prévio, permitindo ao avaliador contrastar as diferenças nos logs e no relatório gerado.
 

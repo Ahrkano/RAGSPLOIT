@@ -33,15 +33,18 @@ API_KEY_PATH = "/app/config/api_key.txt"
 os.makedirs(LOOT_DIR, exist_ok=True)
 
 class PentestPipeline(PipelineBase):
-    def __init__(self, target_ip, attacker_ip):
+    def __init__(self, target_ip, attacker_ip, use_rag=True, only_port=None):
         self.target_ip = target_ip
         self.attacker_ip = attacker_ip
+        self.use_rag = use_rag
+        self.only_port = str(only_port) if only_port else None
         
         print("=== INICIALIZANDO PIPELINE AUTONOMO (V17 - SINGLE TARGET DIRECT) ===")
         print(f"[*] Alvo Definido: {self.target_ip}") 
         print(f"[*] IP do Atacante (LHOST): {self.attacker_ip}")
         print(f"[*] Wordlist: {WORDLIST_PATH}")
         print(f"[*] Logs serao salvos em: {LOOT_DIR}")
+        print(f"[*] Modo RAG: {'HABILITADO' if self.use_rag else 'DESATIVADO (LLM pura / baseline)'}")
         
         self.setup_api_key()
         
@@ -52,7 +55,7 @@ class PentestPipeline(PipelineBase):
                 sys.stderr = fnull
                 try:
                     self.llm = LLMClient()
-                    self.rag = RagEngine()
+                    self.rag = RagEngine() if self.use_rag else None
                 finally:
                     sys.stderr = old_stderr
         except Exception as e:
@@ -165,6 +168,8 @@ class PentestPipeline(PipelineBase):
         print(f"\n>>> [FASE 1] RECONHECIMENTO")
         rec = recon.scan(self.target_ip)
         self.services = rec.get("ports", {})
+        if self.only_port:
+            self.services = {pp: ii for pp, ii in self.services.items() if str(pp) == self.only_port}
         print(f"    [*] Metodo de scan: {rec.get('method')}")
         if not self.services:
             print(f"{C_RED}[!] Nenhuma porta aberta encontrada.{C_RESET}")
@@ -174,21 +179,26 @@ class PentestPipeline(PipelineBase):
             self.open_ports[p] = info.get("banner", "")
             print(f"    {C_GREEN}[+] Porta {p}: {info.get('banner','')}{C_RESET}")
 
-        print(f"\n>>> [FASE 2] ANALISE DINAMICA (100% RAG DRIVEN)")
+        modo_fase2 = "100% RAG DRIVEN" if self.use_rag else "LLM ONLY - SEM RAG (baseline)"
+        print(f"\n>>> [FASE 2] ANALISE DINAMICA ({modo_fase2})")
         wordlist_creds = self.load_credentials()
 
         for port, banner in self.open_ports.items():
             print(f"\n{C_CYAN}--- ALVO: PORTA {port} ({banner}) ---{C_RESET}")
             
-            rag_context = "Nenhuma informacao especifica encontrada no RAG."
-            try:
-                query = f"metasploit module for service banner: {banner} port {port}"
-                docs = self.rag.query(query)
-                if docs: rag_context = "\n".join([d.page_content for d in docs[:3]])
-                print(f"\n{C_MAGENTA}=== [RAG DEBUG] MEMORIA RECUPERADA ==={C_RESET}")
-                print(f"{C_MAGENTA}{rag_context}{C_RESET}")
-                print(f"{C_MAGENTA}======================================{C_RESET}\n")
-            except: pass
+            if not self.use_rag:
+                rag_context = ("AVISO RAG DESATIVADO: decida com base APENAS no "
+                               "reconhecimento (banner/porta/versao) e no seu conhecimento previo.")
+            else:
+                rag_context = "Nenhuma informacao especifica encontrada no RAG."
+                try:
+                    query = f"metasploit module for service banner: {banner} port {port}"
+                    docs = self.rag.query(query)
+                    if docs: rag_context = "\n".join([d.page_content for d in docs[:3]])
+                    print(f"\n{C_MAGENTA}=== [RAG DEBUG] MEMORIA RECUPERADA ==={C_RESET}")
+                    print(f"{C_MAGENTA}{rag_context}{C_RESET}")
+                    print(f"{C_MAGENTA}======================================{C_RESET}\n")
+                except: pass
 
             prompt = f"""
             YOU ARE ACTING AS A SENIOR PENETRATION TESTER AND RED TEAM ANALYST.
@@ -468,12 +478,14 @@ def get_best_route_ip(target_ip):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Pipeline Single Target - Autonomo Ragsploit")
     parser.add_argument("--target", type=str, default=None, help="IP do alvo (ex: 10.0.0.1); se omitido, usa config/target.json")
+    parser.add_argument("--disable-rag", action="store_true", help="Desativa o RAG (ChromaDB): roda o modelo isoladamente (baseline).")
+    parser.add_argument("--port", type=int, default=None, help="Restringe a analise a UMA porta (ex: 139), para A/B RAG on/off.")
     args = parser.parse_args()
 
     target = resolve_target(args.target)
     lhost = get_best_route_ip(target)
 
-    p = PentestPipeline(target_ip=target, attacker_ip=lhost)
+    p = PentestPipeline(target_ip=target, attacker_ip=lhost, use_rag=not args.disable_rag, only_port=args.port)
     try:
         p.run()
         if p.session_id:

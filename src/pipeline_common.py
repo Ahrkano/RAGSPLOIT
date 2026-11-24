@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Base compartilhada dos pipelines de pentest (dedupe incremental).
 
-Contem os metodos identicos entre pipe_v4 / pipe_v3.2 / pipe_rag_onoff.
+Contem os metodos identicos entre pipe_v4 / pipe_v3.2 / pipe_multi.
 As subclasses devem fornecer os atributos de instancia:
   - self.llm  (LLMClient)
   - self.msf  (MetasploitClient)
