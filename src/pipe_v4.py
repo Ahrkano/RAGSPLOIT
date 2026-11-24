@@ -74,6 +74,7 @@ class PentestPipeline(PipelineBase):
         self.history = []
         self.open_ports = {} 
         self.session_id = None
+        self.manual_access = None  # TIER C: foothold manual (sem sessao MSF)
         self.evidence = {}
     
     def check_port(self, port):
@@ -134,7 +135,7 @@ class PentestPipeline(PipelineBase):
         
         lines = [
             "="*50, "RELATORIO FINAL", "="*50,
-            f"DATA: {now}", f"STATUS: {'PWNED' if self.session_id else 'FALHA'}", "-"*50,
+            f"DATA: {now}", f"STATUS: {'PWNED' if (self.session_id or self.manual_access) else 'FALHA'}", "-"*50,
             f"PORTAS: {list(self.open_ports.keys())}", "\n[HISTORICO]"
         ] + [f"- {h}" for h in self.history]
         
@@ -153,7 +154,7 @@ class PentestPipeline(PipelineBase):
         # Registro por-run p/ estatisticas de pesquisa (telemetria + resultado).
         try:
             METRICS.write_run_record(
-                status=("PWNED" if self.session_id else "FALHA"),
+                status=("PWNED" if (self.session_id or self.manual_access) else "FALHA"),
                 target=self.target_ip,
                 attacker=getattr(self, "attacker_ip", None),
                 rag_enabled=getattr(self, "use_rag", True),
@@ -274,6 +275,85 @@ class PentestPipeline(PipelineBase):
         return ("--- RECIPES FOR DISCOVERED WEB APPS (PRIORITIZE THESE over "
                 "generic enumeration) ---\n\n" + "\n\n".join(blocks))
 
+    def run_manual_exploit(self, port, banner, web_context="", rag_context="",
+                           max_rounds=4):
+        """TIER C: exploracao MANUAL autonoma (fora do Metasploit). O LLM AUTORA
+        comandos de shell (curl/python3/perl/wget) executados NO ATACANTE (este
+        host); a saida real volta ao LLM ate confirmar execucao de codigo no
+        alvo. Request/response (sem reverse shell): ideal p/ webshell e PoC HTTP.
+        Retorna True se confirmou execucao (success_check presente na saida)."""
+        import subprocess
+        tools = "curl, python3, perl, wget, bash (NO nc, NO searchsploit)"
+        history = []
+        print(f"\n{C_MAGENTA}>>> [FASE 3] EXPLORACAO (MANUAL / TIER C){C_RESET}")
+        for rnd in range(1, max_rounds + 1):
+            hist_txt = "\n".join(f"$ {c}\n{o[:600]}" for c, o in history[-4:]) \
+                or "(no commands run yet)"
+            prompt = f"""
+YOU ARE A PENTESTER doing MANUAL exploitation in a CONTROLLED LAB because no
+Metasploit module fits (recent CVE, or an eval-only module blocked by badchars).
+Target {self.target_ip}:{port}. You run commands on the ATTACKER host
+({self.attacker_ip}). SERVICE BANNER: "{banner}"
+
+WEB ENUMERATION (discovered paths/apps):
+{web_context}
+
+KNOWLEDGE BASE (RAG):
+{rag_context}
+
+TOOLS on the attacker shell: {tools}. Prefer REQUEST/RESPONSE code execution
+(e.g. upload a webshell via WebDAV PUT, then GET it with a command) over reverse
+shells (there is NO nc here). Target each command at {self.target_ip}.
+
+COMMANDS ALREADY RUN AND THEIR OUTPUT:
+{hist_txt}
+
+Return JSON ONLY:
+{{
+  "commands": ["shell command 1", "shell command 2"],
+  "success_check": "substring proving code execution ON THE TARGET (e.g. uid=)",
+  "done": false,
+  "reason": "what you are trying and why"
+}}
+If the output above already proves execution on the target, set done=true.
+"""
+            resp = self.ask_llm_robust(prompt)
+            if not resp:
+                print(f"{C_RED}[MANUAL] LLM sem resposta.{C_RESET}")
+                return False
+            try:
+                if "{" in resp:
+                    resp = resp[resp.find("{"):resp.rfind("}") + 1]
+                plan = json.loads(resp)
+            except Exception:
+                print(f"{C_RED}[MANUAL] JSON invalido do LLM.{C_RESET}")
+                return False
+            check = (plan.get("success_check") or "").strip()
+            print(f"{C_BLUE}[MANUAL] {plan.get('reason', '(sem motivo)')}{C_RESET}")
+            cmds = plan.get("commands") or []
+            if plan.get("done") and not cmds:
+                break
+            for cmd in cmds:
+                print(f"{C_YELLOW}[MANUAL] $ {cmd}{C_RESET}")
+                try:
+                    r = subprocess.run(["bash", "-c", cmd], capture_output=True,
+                                       text=True, timeout=30)
+                    output = (r.stdout or "") + (r.stderr or "")
+                except Exception as e:
+                    output = f"[erro ao executar: {e}]"
+                output = output[:2000]
+                print(f"{C_CYAN}{output}{C_RESET}")
+                history.append((cmd, output))
+                if check and check in output:
+                    print(f"{C_GREEN}[***] SUCESSO MANUAL! '{check}' presente na saida.{C_RESET}")
+                    self.manual_access = {"port": port, "command": cmd,
+                                          "output": output}
+                    self.evidence["manual_shell"] = output
+                    self.history.append(f"[SUCESSO MANUAL] Porta {port}: {cmd}")
+                    return True
+        print(f"{C_RED}[MANUAL] Esgotadas as rodadas sem confirmar execucao.{C_RESET}")
+        return False
+
     def run(self):
         self.cleanup_sessions()
         print(f"\n>>> [FASE 1] RECONHECIMENTO")
@@ -393,6 +473,7 @@ class PentestPipeline(PipelineBase):
                - "brute_force": for authentication services, using an authentication login scanner (never for a backdoor/exploit).
                - "enumeration": ONLY for version scanners or simple checks (NO credentials used).
                - "exploit_cve": when product and version strongly match a known vulnerability or backdoor (reason from the banner and the RAG knowledge; do not rely on hardcoded examples).
+               - "manual": when NO Metasploit module fits (recent CVE with no module, or an eval-only module blocked by badchars). Exploit by hand via shell tools (webshell upload via WebDAV PUT, curl/python PoC). For "manual" you may leave module_name empty.
                - "skip": If unknown
                
                
@@ -402,7 +483,7 @@ class PentestPipeline(PipelineBase):
             {{
               "module_type": "auxiliary" | "exploit",
               "module_name": "category/service/module_name",
-              "strategy": "enumeration" | "brute_force" | "exploit_cve",
+              "strategy": "enumeration" | "brute_force" | "exploit_cve" | "manual",
               "options": {{"OPT_NAME": "OPT_VALUE"}},
               "confidence": "HIGH" | "MEDIUM" | "LOW",
               "reason": "Explain your decision"
@@ -433,6 +514,11 @@ class PentestPipeline(PipelineBase):
             if not resp:
                 print(f"{C_RED}[LLM] Modelo indisponivel apos retries: sem decisao para a porta {port}. "
                       f"Pulando (sem fallback hardcoded).{C_RESET}")
+                continue
+            if strategy == "manual":
+                self.run_manual_exploit(port, banner, web_context, rag_context)
+                if self.session_id or self.manual_access:
+                    break
                 continue
             if strategy == "skip" or not module:
                 print(f"{C_YELLOW}[AI] O modelo decidiu nao atacar a porta {port}.{C_RESET}")
@@ -646,8 +732,13 @@ class PentestPipeline(PipelineBase):
                 
                 if not self.session_id:
                     print(f"{C_RED}[FALHA GERAL] Todas as tentativas de exploit falharam.{C_RESET}")
+                    # Escala p/ TIER C (manual) em servicos web: o LLM tenta via
+                    # shell (webshell/PoC HTTP) o que o modulo MSF nao conseguiu.
+                    if self._is_web(port, banner):
+                        print(f"{C_YELLOW}[*] Escalando para TIER C (exploracao manual)...{C_RESET}")
+                        self.run_manual_exploit(port, banner, web_context, rag_context)
 
-            if self.session_id: 
+            if self.session_id or self.manual_access:
                 print(f"{C_GREEN}[!] Acesso obtido. Parando scan.{C_RESET}")
                 break
         
