@@ -298,10 +298,13 @@ def main():
         strategy="enumeration",
         module="auxiliary/scanner/http/http_version",
         required_options='    (none beyond RHOSTS/RPORT)',
-        why="""  Do NOT assume a CMS/framework unless the banner proves it. Enumerate first:
-  http_version, then auxiliary/scanner/http/dir_scanner and .../webdav_scanner.
-  On Metasploitable2 /dav is WebDAV-writable (upload a webshell). If you find
-  Tomcat, see the Tomcat card; if Struts, exploit/multi/http/struts2_*.""",
+        why="""  The WEB ENUMERATION section already ran for this port. ACT ON WHAT IT FOUND,
+  do not re-enumerate blindly. If it discovered a specific app (phpMyAdmin,
+  TikiWiki, TWiki, Drupal, WordPress, Jenkins, Struts), or WebDAV/PUT, or a
+  header "X-Powered-By: PHP/5.x": DO NOT run http_version -> use that app's
+  exploit card (strategy exploit_cve) and set TARGETURI to the discovered path.
+  Pick http_version/dir_scanner ONLY if NOTHING exploitable was discovered.
+  On Metasploitable2 /dav is WebDAV-writable (upload a webshell).""",
         alt_ports="Tomcat on 8180; alternative HTTP on 8080/8000.",
     ))
 

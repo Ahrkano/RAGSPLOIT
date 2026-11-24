@@ -225,6 +225,55 @@ class PentestPipeline(PipelineBase):
             text = text[:1800] + "\n...(truncado)"
         return text
 
+    def web_app_cards(self, web_context):
+        """Para cada app/path descoberto na enum web, faz uma query FOCADA no RAG
+        e junta os cards-receita especificos, garantindo que cheguem ao prompt
+        (a query misturada por banner afunda as receitas de app)."""
+        if not self.use_rag or not self.rag:
+            return ""
+        apps = []
+        for ln in web_context.splitlines():
+            t = ln.strip().lstrip("|_ ").strip()
+            m = re.match(r"^(/\S*):\s*(.+)$", t)
+            if m:
+                label = m.group(2).strip()
+                low = label.lower()
+                generic = any(w in low for w in ("potentially interesting",
+                              "directory", "folder", "listing", "test page",
+                              "information file", "icons", "index"))
+                if generic:
+                    continue   # path-ruido: nao vira termo de busca
+                if label and label not in apps:
+                    apps.append(label)
+            elif "dav" in t.lower() and "server" in t.lower():
+                if "webdav upload" not in apps:
+                    apps.append("webdav upload")
+            elif "x-powered-by" in t.lower() and "php" in t.lower():
+                if "php cgi argument injection" not in apps:
+                    apps.append("php cgi argument injection")
+        if not apps:
+            return ""
+        seen, blocks = set(), []
+        for app in apps[:6]:
+            try:
+                docs = self.rag.query(
+                    f"attack recipe for {app} web application metasploit module "
+                    f"targeturi payload", k=4)
+            except Exception:
+                continue
+            tactic = [d for d in docs if "manual/tactic/" in d.page_content]
+            other = [d for d in docs if "manual/tactic/" not in d.page_content]
+            for d in (tactic[:1] + other[:1]):
+                name = next((l.strip() for l in d.page_content.splitlines()
+                             if l.strip().startswith("NAME:")), "")
+                if name and name not in seen:
+                    seen.add(name)
+                    blocks.append(d.page_content)
+        if not blocks:
+            return ""
+        return ("--- RECIPES FOR DISCOVERED WEB APPS (PRIORITIZE THESE over "
+                "generic enumeration) ---\n\n" + "\n\n".join(blocks))
+
     def run(self):
         self.cleanup_sessions()
         print(f"\n>>> [FASE 1] RECONHECIMENTO")
@@ -268,6 +317,10 @@ class PentestPipeline(PipelineBase):
                              f"which metasploit module, exact options and payload to use. {web_sig}")
                     docs = self.rag.query(query, k=8)
                     if docs: rag_context = "\n\n".join([d.page_content for d in docs[:8]])
+                    if self._is_web(port, banner):
+                        _wac = self.web_app_cards(web_context)
+                        if _wac:
+                            rag_context = _wac + "\n\n" + rag_context
                     print(f"\n{C_MAGENTA}=== [RAG DEBUG] MEMORIA RECUPERADA ==={C_RESET}")
                     print(f"{C_MAGENTA}{rag_context}{C_RESET}")
                     print(f"{C_MAGENTA}======================================{C_RESET}\n")
@@ -319,11 +372,15 @@ class PentestPipeline(PipelineBase):
             7. If uncertainty exists:
                - Choose a SAFE ENUMERATION strategy.
             8. For HTTP/HTTPS services: a server banner (Apache/nginx/PHP) does NOT
-               identify the vulnerable app. Use the WEB ENUMERATION findings above:
-               pick a module that matches a DISCOVERED path/app and set the exact
-               path in the "TARGETURI" option (e.g. "TARGETURI": "/phpmyadmin/").
-               If nothing exploitable was discovered, prefer enumeration (e.g.
-               auxiliary/scanner/http/dir_scanner) or report findings.
+               identify the vulnerable app. Read the WEB ENUMERATION findings above.
+               IF a known-vulnerable app/path was DISCOVERED (e.g. /phpMyAdmin/,
+               /tikiwiki/, /twiki/, Drupal, WordPress, Jenkins, Struts, WebDAV, or
+               "X-Powered-By: PHP/5.x") and the KNOWLEDGE BASE has a recipe for it,
+               you MUST choose strategy "exploit_cve" with THAT module and set the
+               exact path in "TARGETURI" (e.g. "TARGETURI": "/tikiwiki/"). Do NOT
+               fall back to a version scanner (http_version) when an exploitable app
+               was found. Choose enumeration (dir_scanner) ONLY if the WEB
+               ENUMERATION discovered nothing exploitable.
                
             ----------------------------------------
             TASK
