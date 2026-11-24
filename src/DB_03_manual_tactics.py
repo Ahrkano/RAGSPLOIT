@@ -222,6 +222,32 @@ def main():
         """
     ))
 
+    cards.append(format_tactical_card(
+        name="encoder_failure_and_badchars",
+        keywords="all encoders failed to encode badchars payload incompatible switch module php base64",
+        description="What to do when Metasploit says 'All encoders failed to encode'.",
+        instructions="""
+        "All encoders failed to encode" means the MODULE's BadChars are incompatible
+        with every available encoder for that payload. The payload itself is fine
+        (it builds in msfvenom); the module rejects the encoded bytes. Retrying the
+        SAME module with another payload usually fails the same way.
+        WHAT TO DO (in order):
+          1. Try a payload of a DIFFERENT TYPE the module accepts (see 'show
+             payloads'): e.g. a "cmd/unix/*" or "generic/*" command payload instead
+             of a staged php/meterpreter; command payloads often avoid the bad bytes.
+          2. If it still fails, SWITCH MODULE (return "module_name"): pick another
+             exploit for the SAME app whose payload type avoids the badchars -
+             e.g. a file-UPLOAD module that writes a .php webshell instead of an
+             eval-based one.
+          3. If no module works, escalate to TIER C (missing_module_manual_poc):
+             upload and execute a minimal webshell by hand.
+        EXAMPLE: exploit/unix/webapp/tikiwiki_graph_formula_exec marks 'x' as a
+        BadChar, so php/base64 (whose alphabet contains 'x') can NEVER encode a PHP
+        payload for it -> do not keep retrying; switch to an upload-based module or
+        a manual webshell.
+        """
+    ))
+
     # =====================================================================
     # RECEITAS POR SERVICO (Metasploitable2 e alvos Linux/Unix classicos)
     # =====================================================================

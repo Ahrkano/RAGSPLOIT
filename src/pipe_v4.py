@@ -540,8 +540,11 @@ class PentestPipeline(PipelineBase):
                 print(f"{C_YELLOW}[*] Iniciando cadeia de Exploit (com Auto-Retry AI)...{C_RESET}")
                 
                 max_attempts = 3
+                tried_payloads = set()
                 for attempt in range(1, max_attempts + 1):
                     opts["DisablePayloadHandler"] = opts.get("DisablePayloadHandler", "false")
+                    if opts.get("PAYLOAD"):
+                        tried_payloads.add(opts["PAYLOAD"])
                     
                     print(f"\n{C_YELLOW}[DEBUG] Tentativa {attempt}/{max_attempts} - Executando {m_type}/{m_name}{C_RESET}")
                     print(f"{C_YELLOW}[DEBUG] Opcoes injetadas pela IA: {opts}{C_RESET}")
@@ -566,9 +569,23 @@ class PentestPipeline(PipelineBase):
                     # SE FALHOU, PEDE CORREÇÃO DO ERRO
                     if attempt < max_attempts:
                         print(f"{C_YELLOW}[*] Consultando a IA Estrategista para recalcular os parametros...{C_RESET}")
+                        _enc_wall = "encoders failed to encode" in (mod_output or "").lower()
+                        _tried_txt = ", ".join(sorted(tried_payloads)) or "(none)"
+                        _wall_note = ""
+                        if _enc_wall:
+                            _wall_note = (
+                                "ENCODER WALL: 'All encoders failed to encode' is a BadChars "
+                                "incompatibility, NOT a transient error. ANOTHER php/* payload "
+                                "will FAIL IDENTICALLY. You MUST do ONE of: (a) use a cmd/unix/* "
+                                "or generic/* payload this module accepts; (b) switch module via "
+                                "'module_name' to a DIFFERENT exploit for this app (e.g. an "
+                                "upload-based one that writes a .php webshell). Do NOT pick "
+                                "another php/* payload.\n")
                         retry_prompt = f"""
                         The exploit '{m_name}' failed to create a session on {self.target_ip}.
                         The options used were: {opts}
+                        {_wall_note}
+                        Payloads already tried (do NOT repeat any of these): {_tried_txt}
                         
                         REAL METASPLOIT OUTPUT (read it and fix the ACTUAL error):
                         ---
@@ -586,10 +603,15 @@ class PentestPipeline(PipelineBase):
                         - "not vulnerable"/"does not appear" -> path/version wrong; fix
                           URI/TARGETURI/RPORT.
                         Use the EXACT option names this module accepts. Do NOT give up early.
+                        If the SAME module cannot work (e.g. "All encoders failed to encode"
+                        keeps happening because its BadChars are incompatible with every
+                        payload, or it reports "not vulnerable"), you MAY switch to a
+                        DIFFERENT real module for the same service/app via "module_name".
                         
                         OUTPUT FORMAT (JSON ONLY):
                         {{
                           "strategy": "exploit_cve",
+                          "module_name": "optional/replacement/module (omit to keep current)",
                           "options": {{"OPT_NAME": "NEW_OPT_VALUE"}},
                           "remove_options": ["OPT_TO_REMOVE"],
                           "reason": "Explain exactly what you changed and why (cite the output)."
@@ -606,6 +628,14 @@ class PentestPipeline(PipelineBase):
                                     break
                                 
                                 # ATUALIZA COM NOVA SUGESTÃO
+                                nm = (new_plan.get("module_name") or "").strip()
+                                if nm:
+                                    cn = nm.replace("exploit/", "").replace("auxiliary/", "").strip("/")
+                                    if self.msf.verify_module_exists("exploit", cn):
+                                        m_type, m_name = "exploit", cn
+                                        print(f"{C_BLUE}[AI] Trocando de modulo para: exploit/{m_name}{C_RESET}")
+                                    else:
+                                        print(f"{C_RED}[AI] Modulo sugerido invalido: {nm} (mantendo o atual){C_RESET}")
                                 for _rk in (new_plan.get("remove_options") or []):
                                     opts.pop(_rk, None)
                                 new_opts = new_plan.get("options", {})
