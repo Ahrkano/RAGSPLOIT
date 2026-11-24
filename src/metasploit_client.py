@@ -142,3 +142,37 @@ class MetasploitClient:
         cmds = [f"use auxiliary/{mod}"] + [f"set {k} {v}" for k, v in opts.items()] + ["run -z"]
         print(f"[MSF] Login scan (arquivo): auxiliary/{mod}")
         return self.execute_command("\n".join(cmds), timeout=timeout, done_marker="% complete")
+
+    def search_modules(self, query, limit=25):
+        """TIER A (modulo ausente): roda 'search <query>' no msfconsole e devolve
+        a saida crua. Serve para alimentar o LLM com os NOMES REAIS de modulos
+        desta instalacao (os nomes mudam entre versoes), em vez de ele adivinhar.
+        """
+        q = (query or "").strip()
+        if not q:
+            return ""
+        out = self.execute_command(f"search {q}", timeout=40) or ""
+        # limita as linhas para nao estourar o prompt do LLM
+        lines = out.splitlines()
+        if len(lines) > limit + 6:
+            lines = lines[:limit + 6]
+        return "\n".join(lines)
+
+    def load_external_modules(self, path=None):
+        """TIER B (modulo ausente): registra uma arvore de modulos externos/
+        comunitarios (.rb) e re-indexa (loadpath + reload_all). O 'path' precisa
+        existir no HOST do Metasploit (volume compartilhado). Best-effort: nao
+        quebra o pipeline se o diretorio nao existir.
+        """
+        path = path or os.getenv("MSF_EXTRA_MODULES", "/root/.msf4/modules")
+        try:
+            out = self.execute_command(f"loadpath {path}", timeout=60) or ""
+            low = out.lower()
+            # Nada carregado (dir ausente/vazio) -> nao gasta tempo no reload_all.
+            if ("does not exist" in low or "loaded 0 modules" in low
+                    or "no modules" in low or "fail" in low):
+                return out
+            self.execute_command("reload_all", timeout=180)
+            return out
+        except Exception as e:
+            return f"[loadpath erro] {e}"

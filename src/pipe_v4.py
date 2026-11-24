@@ -51,6 +51,14 @@ class PentestPipeline(PipelineBase):
         
         try:
             self.msf = MetasploitClient(password="msfpass", server="192.168.70.20")
+            # TIER B (modulo ausente): registra modulos externos pre-posicionados
+            # (se houver) para ficarem disponiveis ao "use". Best-effort.
+            try:
+                _lp = self.msf.load_external_modules()
+                if _lp and "erro" not in _lp.lower() and "does not exist" not in _lp.lower():
+                    print("[MSF] loadpath de modulos externos: ok")
+            except Exception:
+                pass
             with open(os.devnull, 'w') as fnull:
                 old_stderr = sys.stderr
                 sys.stderr = fnull
@@ -325,8 +333,24 @@ class PentestPipeline(PipelineBase):
                not self.msf.verify_module_exists("exploit", clean_name):
                 # Autocorrecao AUTONOMA: o erro volta ao LLM para ele re-decidir
                 # (sem heuristica hardcoded de substituicao de modulo).
+                # TIER A: pergunta ao msfconsole os modulos REAIS desta instalacao
+                # e entrega os nomes exatos ao LLM (nomes mudam entre versoes).
+                search_out = ""
+                try:
+                    search_out = self.msf.search_modules(banner.strip())
+                    if not search_out.strip():
+                        search_out = self.msf.search_modules(module.split("/")[-1])
+                except Exception:
+                    pass
+                if search_out.strip():
+                    print(f"{C_MAGENTA}=== [SEARCH] modulos reais encontrados ==={C_RESET}")
+                    print(f"{C_MAGENTA}{search_out}{C_RESET}")
                 fix_prompt = (f"O modulo Metasploit '{module}' nao existe nesta instalacao.\n"
-                              f"Servico/banner: {banner}\nContexto (RAG):\n{rag_context}\n"
+                              f"Servico/banner: {banner}\n"
+                              f"RESULTADOS REAIS do comando search nesta instalacao "
+                              f"(escolha UM destes nomes EXATOS, se algum servir):\n"
+                              f"{search_out or '(search sem resultados)'}\n"
+                              f"Contexto (RAG):\n{rag_context}\n"
                               f"Responda SOMENTE JSON com um modulo Metasploit REAL e valido: "
                               f'{{"module_type":"auxiliary|exploit","module_name":"cat/serv/mod","strategy":"enumeration|brute_force|exploit_cve"}}')
                 fresp = self.ask_llm_robust(fix_prompt)
