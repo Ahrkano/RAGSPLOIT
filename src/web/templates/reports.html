@@ -3,9 +3,31 @@
 {% block title %}Reports{% endblock %}
 {% block head %}
 <style>
-  #viewer{width:100%;height:50vh;min-height:300px;background:#000;border:1px solid var(--border);
-          border-radius:8px;padding:12px;overflow:auto;white-space:pre-wrap;color:var(--fg);
-          font-size:13px;display:none}
+  /* Grade de relatorios: varias colunas de botoes */
+  .report-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:10px;margin-top:6px}
+  .report-grid button{display:flex;flex-direction:column;align-items:flex-start;gap:3px;
+       text-align:left;width:100%;background:var(--panel2);color:var(--fg);border:1px solid var(--border);
+       border-radius:8px;padding:11px 13px;cursor:pointer;font:inherit;font-weight:normal}
+  .report-grid button:hover{border-color:var(--green);color:var(--green);background:var(--panel2)}
+  .report-grid .rname{font-size:13px;word-break:break-all;line-height:1.35}
+  .report-grid .rmeta{font-size:11px;color:var(--muted)}
+
+  /* Modal central */
+  .overlay{position:fixed;inset:0;background:rgba(0,0,0,.72);z-index:1000;
+       display:none;align-items:center;justify-content:center;padding:20px}
+  .overlay.open{display:flex}
+  .modal{background:var(--panel);border:1px solid var(--green-d);border-radius:12px;
+       width:100%;max-width:920px;max-height:86vh;display:flex;flex-direction:column;
+       box-shadow:0 18px 60px rgba(0,0,0,.6)}
+  .modal-head{display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid var(--border)}
+  .modal-head h3{margin:0;font-size:14px;color:var(--green);word-break:break-all;flex:1}
+  .modal-head .x{flex:0 0 auto;background:transparent;border:1px solid var(--border);color:var(--fg);
+       border-radius:6px;padding:4px 10px;cursor:pointer;font:inherit;font-weight:bold}
+  .modal-head .x:hover{border-color:var(--red);color:var(--red)}
+  .modal-body{padding:14px 16px;overflow:auto;white-space:pre-wrap;word-break:break-word;
+       font-size:13px;flex:1;background:#000}
+  .modal-foot{display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap;
+       padding:12px 16px;border-top:1px solid var(--border)}
 </style>
 {% endblock %}
 {% block body %}
@@ -28,35 +50,86 @@
 <div class="panel">
   <h2>Logs de execucao ({{ logs|length }})</h2>
   {% if logs %}
-  <table>
-    <thead><tr><th>Arquivo</th><th>Tamanho</th><th></th></tr></thead>
-    <tbody>
+  <p class="hint">Clique num relatorio para abri-lo numa janela central.</p>
+  <div class="report-grid">
     {% for l in logs %}
-      <tr>
-        <td>{{ l.name }}</td>
-        <td>{{ l.size }} B</td>
-        <td><button class="ghost" data-name="{{ l.name }}" onclick="viewLog(this)">ver</button></td>
-      </tr>
+      <button data-name="{{ l.name }}" data-size="{{ l.size }}" onclick="openReport(this)">
+        <span class="rname">{{ l.name }}</span>
+        <span class="rmeta">{{ l.size }} B</span>
+      </button>
     {% endfor %}
-    </tbody>
-  </table>
+  </div>
   {% else %}
-  <p class="hint">Nenhum log ainda. Rode um ataque em <a href="/run">Run</a>.</p>
+  <p class="hint">Nenhum relatorio ainda. Rode um ataque em <a href="/run">Run</a>.</p>
   {% endif %}
-  <pre id="viewer"></pre>
+</div>
+
+<!-- Modal central de visualizacao -->
+<div class="overlay" id="overlay">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="mTitle">
+    <div class="modal-head">
+      <h3 id="mTitle">relatorio</h3>
+      <button class="x" onclick="closeReport()" title="Fechar (Esc)">x</button>
+    </div>
+    <pre class="modal-body" id="mBody"></pre>
+    <div class="modal-foot">
+      <button class="ghost" id="btnCopy">Copiar texto</button>
+      <button class="ghost" id="btnDownload">Baixar .txt</button>
+      <button onclick="closeReport()">Fechar</button>
+    </div>
+  </div>
 </div>
 
 <script>
 const $ = s => document.querySelector(s);
 function flash(ok,text){ const m=$("#msg"); m.className="msg "+(ok?"ok":"err"); m.textContent=text;
   setTimeout(()=>{m.className="msg";},5000); }
-async function viewLog(btn){
-  const name=btn.dataset.name;
-  const r=await fetch("/api/report/raw?name="+encodeURIComponent(name));
-  const v=$("#viewer");
+
+let currentName = "", currentText = "";
+const overlay = $("#overlay");
+
+async function openReport(btn){
+  const name = btn.dataset.name;
+  const r = await fetch("/api/report/raw?name="+encodeURIComponent(name));
   if(!r.ok){ flash(false,"falha ao ler "+name); return; }
-  v.style.display="block"; v.textContent=await r.text(); v.scrollIntoView({behavior:"smooth"});
+  currentName = name;
+  currentText = await r.text();
+  $("#mTitle").textContent = name;
+  $("#mBody").textContent = currentText;
+  $("#mBody").scrollTop = 0;
+  overlay.classList.add("open");
+  document.body.style.overflow = "hidden";   // trava o scroll do fundo
 }
+function closeReport(){
+  overlay.classList.remove("open");
+  document.body.style.overflow = "";
+}
+// Fecha ao clicar fora da caixa ou com Esc
+overlay.addEventListener("click", e => { if(e.target === overlay) closeReport(); });
+document.addEventListener("keydown", e => { if(e.key === "Escape" && overlay.classList.contains("open")) closeReport(); });
+
+$("#btnCopy").addEventListener("click", async ()=>{
+  try{
+    await navigator.clipboard.writeText(currentText);
+    flash(true,"texto copiado para a area de transferencia.");
+  }catch(err){
+    // Fallback (contextos sem Clipboard API)
+    const ta=document.createElement("textarea"); ta.value=currentText;
+    document.body.appendChild(ta); ta.select();
+    try{ document.execCommand("copy"); flash(true,"texto copiado."); }
+    catch(e2){ flash(false,"nao foi possivel copiar."); }
+    document.body.removeChild(ta);
+  }
+});
+$("#btnDownload").addEventListener("click", ()=>{
+  const blob = new Blob([currentText], {type:"text/plain;charset=utf-8"});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = currentName || "relatorio.txt";
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
+});
+
 $("#btnGen").addEventListener("click", async ()=>{
   $("#btnGen").disabled=true; flash(true,"gerando...");
   const r=await fetch("/api/report/generate",{method:"POST"});
