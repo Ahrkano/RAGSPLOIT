@@ -361,7 +361,20 @@ If the output above already proves execution on the target, set done=true.
         print(f"\n>>> [FASE 2] ANALISE DINAMICA ({modo_fase2})")
         wordlist_creds = self.load_credentials()
 
-        for port, banner in self.open_ports.items():
+        # Fila de ataque: em falha, a porta volta p/ a fila para o LLM escolher
+        # uma ESTRATEGIA alternativa (fallback guiado pelo modelo, nao hardcoded).
+        attack_queue = [(pp, bb, "", []) for pp, bb in self.open_ports.items()]
+        MAX_STRATS = 3  # tentativas de estrategia por porta
+        while attack_queue:
+            port, banner, fail_note, tried = attack_queue.pop(0)
+            _prev_note = ""
+            if tried:
+                _prev_note = (
+                    "\n            PREVIOUS ATTEMPTS ON THIS PORT (already tried: "
+                    + ", ".join(tried) + f"; last result: {fail_note}). "
+                    "Choose a DIFFERENT strategy for THIS port now (if brute_force "
+                    "failed, try exploit_cve; if exploit failed, try brute_force or "
+                    "manual), or 'skip' if nothing else is viable.\n")
             print(f"\n{C_CYAN}--- ALVO: PORTA {port} ({banner}) ---{C_RESET}")
 
             # RECON WEB primeiro: os achados enriquecem a QUERY do RAG e o prompt.
@@ -407,6 +420,7 @@ If the output above already proves execution on the target, set done=true.
             ATTACKER IP (LHOST): {self.attacker_ip}
             SERVICE BANNER:
             "{banner}"
+            {_prev_note}
             
             ----------------------------------------
             KNOWLEDGE BASE (RAG)
@@ -462,6 +476,14 @@ If the output above already proves execution on the target, set done=true.
                - "exploit_cve": when product and version strongly match a known vulnerability or backdoor (reason from the banner and the RAG knowledge; do not rely on hardcoded examples).
                - "manual": when NO Metasploit module fits (recent CVE with no module, or an eval-only module blocked by badchars). Exploit by hand via shell tools (webshell upload via WebDAV PUT, curl/python PoC). For "manual" you may leave module_name empty.
                - "skip": If unknown
+            STRATEGY PRECEDENCE (pick the FIRST that applies):
+               a) STRONG version match to a known exploit, especially an
+                  UNAUTHENTICATED RCE/backdoor -> exploit_cve FIRST (do not
+                  waste the turn on brute force when a real exploit exists).
+               b) Auth service whose exploit NEEDS creds -> brute_force to get
+                  creds, then chain the exploit on the next step.
+               c) Auth service with no public exploit -> brute_force alone.
+               d) Uncertain -> enumeration.
                
                
             ----------------------------------------
@@ -725,6 +747,10 @@ If the output above already proves execution on the target, set done=true.
                         print(f"{C_YELLOW}[*] Escalando para TIER C (exploracao manual)...{C_RESET}")
                         self.run_manual_exploit(port, banner, web_context, rag_context)
 
+            if not (self.session_id or self.manual_access):
+                if strategy in ("brute_force", "enumeration", "exploit_cve") and len(tried) + 1 < MAX_STRATS:
+                    attack_queue.insert(0, (port, banner, f"'{strategy}' nao obteve shell", tried + [strategy]))
+                    print(f"{C_YELLOW}[*] Estrategia '{strategy}' falhou na porta {port}; reconsultando o LLM por uma estrategia ALTERNATIVA...{C_RESET}")
             if self.session_id or self.manual_access:
                 print(f"{C_GREEN}[!] Acesso obtido. Parando scan.{C_RESET}")
                 break

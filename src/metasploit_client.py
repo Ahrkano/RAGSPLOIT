@@ -135,7 +135,10 @@ class MetasploitClient:
         if user_file: opts["USER_FILE"] = user_file
         if pass_file: opts["PASS_FILE"] = pass_file
         opts.setdefault("STOP_ON_SUCCESS", "true")
-        opts.setdefault("BLANK_PASSWORDS", "false")
+        # Testa senha EM BRANCO (config fraca classica: ex. MySQL root sem senha
+        # no Metasploitable2). Sem isto o brute nunca acha contas de senha vazia,
+        # mesmo que a cred nao esteja na wordlist.
+        opts.setdefault("BLANK_PASSWORDS", "true")
         opts.setdefault("USER_AS_PASS", "true")
         opts.setdefault("VERBOSE", "false")
         opts.setdefault("BRUTEFORCE_SPEED", "4")

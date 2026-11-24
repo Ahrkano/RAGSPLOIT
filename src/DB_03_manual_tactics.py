@@ -111,12 +111,21 @@ def main():
           - "brute_force": login/auth scanners (module name has 'login'/'_login').
              Do NOT put USERNAME/PASSWORD in options; the pipeline feeds the wordlist.
           - "exploit_cve": strong product+version match to a known RCE/backdoor.
-        MATCHING ORDER:
-          1. Identify service by PORT, confirm with BANNER (product + version).
-          2. If version strongly matches a known vuln -> exploit_cve.
-          3. If auth service (FTP/SSH/Telnet/SMB/DB/VNC) and no public exploit ->
-             try brute_force with the lab wordlist.
-          4. If uncertain -> enumeration (safe) and report.
+          - "manual": no module fits -> exploit by hand (see manual card).
+        PRECEDENCE (very important - pick the FIRST that applies):
+          1. STRONG product+version match to a known exploit, ESPECIALLY an
+             UNAUTHENTICATED RCE/backdoor -> "exploit_cve" FIRST. A failed brute
+             force ends that path, but an unauth exploit can win outright, so do
+             NOT waste the attempt on brute force when a real exploit exists.
+          2. Auth service (FTP/SSH/Telnet/SMB/DB/VNC) whose exploit NEEDS creds
+             (e.g. mysql_udf, postgres_payload, mssql_exec) -> "brute_force" to
+             GET the creds, THEN chain the exploit_cve on the next step. Try weak/
+             blank/default creds (many DBs: root/blank, sa/blank, postgres/postgres).
+          3. Auth service with NO public exploit -> "brute_force" alone.
+          4. Uncertain -> "enumeration" (safe) and report.
+        If your first choice fails, the pipeline will ask you again for THIS port:
+        switch strategy (e.g. brute_force -> exploit_cve, or vice-versa) instead
+        of giving up.
         PATH tells the OS: exploit/windows, exploit/linux, exploit/unix, exploit/multi.
         """
     ))
