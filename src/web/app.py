@@ -187,6 +187,19 @@ def _enforce_auth():
     return redirect(url_for("login", next=p))
 
 
+@app.after_request
+def _no_store_html(resp):
+    # Paginas dinamicas (ex.: Reports) nao podem ser servidas do cache/bfcache
+    # do navegador, senao uma nova execucao nao aparece ate um hard-refresh.
+    # Estaticos (/static/*: js/css) continuam cacheaveis.
+    try:
+        if (resp.mimetype or "").startswith("text/html"):
+            resp.headers["Cache-Control"] = "no-store, must-revalidate"
+    except Exception:
+        pass
+    return resp
+
+
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
