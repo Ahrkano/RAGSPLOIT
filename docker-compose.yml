@@ -53,6 +53,11 @@ services:
       # neste caminho (mesmo path do pipeline), permitindo brute-force em
       # UMA execucao sobre a wordlist inteira.
       - ./data/vectorstore/wordlists:/app/data/wordlists
+      # TIER B (modulo ausente): arvore de modulos externos/comunitarios. O
+      # Metasploit carrega ~/.msf4/modules automaticamente no startup, entao
+      # .rb soltos aqui ficam disponiveis para 'use' (CVEs recentes sem modulo
+      # oficial). Ver data/msf_modules/README.md.
+      - ./data/msf_modules:/root/.msf4/modules
 
   tgt:
     build: ./tgt

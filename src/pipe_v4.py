@@ -51,14 +51,6 @@ class PentestPipeline(PipelineBase):
         
         try:
             self.msf = MetasploitClient(password="msfpass", server="192.168.70.20")
-            # TIER B (modulo ausente): registra modulos externos pre-posicionados
-            # (se houver) para ficarem disponiveis ao "use". Best-effort.
-            try:
-                _lp = self.msf.load_external_modules()
-                if _lp and "erro" not in _lp.lower() and "does not exist" not in _lp.lower():
-                    print("[MSF] loadpath de modulos externos: ok")
-            except Exception:
-                pass
             with open(os.devnull, 'w') as fnull:
                 old_stderr = sys.stderr
                 sys.stderr = fnull

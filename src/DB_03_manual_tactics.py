@@ -187,16 +187,16 @@ def main():
         description="TIER B: load an external/community module that ships with the lab.",
         instructions="""
         Some CVEs only have a COMMUNITY module (a .rb file), not in the base install.
-        The lab stages curated external modules under a shared folder that is
-        mounted into Metasploit (default: /root/.msf4/modules, and the repo copy
-        at /app/data/vectorstore/msf_modules).
-        STEPS (run in msfconsole):
-          1. loadpath /root/.msf4/modules        (registers the extra tree)
-          2. reload_all                          (re-indexes all modules)
-          3. search <keyword>                    (confirm it is now listed)
-          4. use <full/path/of/the/module>       (then set options as usual)
-        If a service card names an EXTERNAL module, assume it is available only
-        after loadpath/reload_all. If loadpath finds nothing, go to TIER C.
+        The lab stages curated external modules in the repo at data/msf_modules/,
+        MOUNTED into Metasploit at /root/.msf4/modules. Metasploit auto-loads
+        ~/.msf4/modules at STARTUP, so those modules are usually already available:
+        just 'search <keyword>' and 'use <full/path>'.
+        If you dropped a new .rb at RUNTIME (same session, no restart), register it:
+          1. loadpath /root/.msf4/modules   (adds the tree)
+          2. reload_all                     (re-indexes)
+          3. search <keyword>               (confirm it is listed)
+          4. use <full/path/of/the/module>  (then set options as usual)
+        If still nothing fits, go to TIER C (manual).
         """
     ))
 
