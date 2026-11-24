@@ -20,6 +20,7 @@ from src.llm_client import LLMClient
 from src.rag_engine import RagEngine
 from src.pipeline_common import PipelineBase, resolve_target
 from src import recon, wordlists
+from src.llm_metrics import METRICS
 
 # --- COLORS ---
 C_RED, C_GREEN, C_YELLOW, C_BLUE, C_RESET = "\033[91m", "\033[92m", "\033[93m", "\033[94m", "\033[0m"
@@ -140,6 +141,17 @@ class PentestPipeline(PipelineBase):
             print(f"{'='*60}{C_RESET}\n")
         except Exception as e:
             print(f"{C_RED}[ERRO LOG] Nao foi possivel salvar relatorio: {e}{C_RESET}")
+
+        # Registro por-run p/ estatisticas de pesquisa (telemetria + resultado).
+        try:
+            METRICS.write_run_record(
+                status=("PWNED" if self.session_id else "FALHA"),
+                target=self.target_ip,
+                attacker=getattr(self, "attacker_ip", None),
+                rag_enabled=getattr(self, "use_rag", True),
+            )
+        except Exception:
+            pass
 
     def enter_interactive_mode(self):
         if not self.session_id: return

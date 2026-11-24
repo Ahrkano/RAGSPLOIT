@@ -193,7 +193,7 @@ Acesse `http://127.0.0.1:8090` e autentique.
 - **Dashboard** — estado atual (alvo, provedor, modelo, presença de chaves).
 - **Config** — escolher provedor/modelo (lista ao vivo da API do provedor), cadastrar chave de API (salva no `.env`) e definir o alvo (salva em `config/target.json`).
 - **Run** — dispara o pipeline num **terminal real (PTY + WebSocket + xterm.js)**: a saída aparece ao vivo e, ao entrar no shell interativo pós-exploração, basta digitar na mesma janela.
-- **Reports** — lista os relatórios `.txt` de execução; clique para abrir num modal central (copiar texto, abrir/baixar como HTML por execução, baixar .txt).
+- **Reports** — relatórios `.txt` de execução (modal central: copiar, abrir/baixar HTML por execução, baixar .txt) e **Estatísticas por modelo** (OpenAI/Google/Anthropic/Local): acurácia, latência média, desvio padrão, p95, taxa de sucesso do ataque e das chamadas, tokens, com gráficos. Só entram runs com telemetria (schema atual).
 
 # LICENSE
 

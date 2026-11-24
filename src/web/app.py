@@ -23,6 +23,7 @@ import re
 import sys
 import json
 import glob
+import statistics
 import html as _html
 import hmac
 import signal
@@ -470,6 +471,104 @@ def api_report_html():
         text = f.read()
     return Response(_report_to_html(os.path.basename(path), text),
                     mimetype="text/html; charset=utf-8")
+
+
+# --- Estatisticas de pesquisa (por provedor de LLM) ---
+# So entram runs com o schema "ragsploit.run/1" (runstats_*.json gravado pelo
+# pipeline). Runs/logs antigos sem esse marcador nao sao classificaveis.
+_PROVIDERS = ["OpenAI", "Google", "Anthropic", "Local"]
+
+
+def _norm_provider(p):
+    s = (p or "").strip().lower()
+    if not s:
+        return None
+    if "openai" in s or s.startswith("gpt"):
+        return "OpenAI"
+    if "anthropic" in s or "claude" in s:
+        return "Anthropic"
+    if "gemini" in s or "google" in s:
+        return "Google"
+    if "local" in s:
+        return "Local"
+    return None
+
+
+def _pct(values, p):
+    if not values:
+        return 0.0
+    s = sorted(values)
+    k = max(0, min(len(s) - 1, int(round((p / 100.0) * (len(s) - 1)))))
+    return s[k]
+
+
+def _collect_stats():
+    buckets = {p: {"runs": 0, "pwned": 0, "calls": 0, "ok": 0, "json_valid": 0,
+                   "latencies": [], "tokens": 0, "rag_on": 0, "rag_off": 0,
+                   "models": set()} for p in _PROVIDERS}
+    total = classified = 0
+    for f in glob.glob(os.path.join(LOGS_DIR, "runstats_*.json")):
+        try:
+            with open(f, encoding="utf-8") as fh:
+                rec = json.load(fh)
+        except Exception:
+            continue
+        if rec.get("schema") != "ragsploit.run/1":
+            continue
+        total += 1
+        prov = _norm_provider(rec.get("provider"))
+        if prov is None:
+            continue
+        classified += 1
+        b = buckets[prov]
+        b["runs"] += 1
+        if rec.get("pwned"):
+            b["pwned"] += 1
+        m = rec.get("metrics") or {}
+        b["calls"] += int(m.get("calls") or 0)
+        b["ok"] += int(m.get("ok") or 0)
+        b["json_valid"] += int(m.get("json_valid") or 0)
+        b["tokens"] += int(m.get("total_tokens") or 0)
+        b["latencies"] += [float(x) for x in (rec.get("latencies") or [])]
+        if rec.get("model"):
+            b["models"].add(rec["model"])
+        re_flag = rec.get("rag_enabled")
+        if re_flag is True:
+            b["rag_on"] += 1
+        elif re_flag is False:
+            b["rag_off"] += 1
+    out = {}
+    for p in _PROVIDERS:
+        b = buckets[p]
+        lats = b["latencies"]
+        n = len(lats)
+        calls = b["calls"]
+        out[p] = {
+            "runs": b["runs"],
+            "pwned": b["pwned"],
+            "attack_success_rate": round(b["pwned"] / b["runs"], 3) if b["runs"] else None,
+            "calls": calls,
+            "accuracy": round(b["json_valid"] / calls, 3) if calls else None,
+            "llm_success_rate": round(b["ok"] / calls, 3) if calls else None,
+            "llm_error_rate": round(1 - b["ok"] / calls, 3) if calls else None,
+            "latency_avg": round(sum(lats) / n, 3) if n else None,
+            "latency_std": (round(statistics.pstdev(lats), 3) if n > 1
+                            else (0.0 if n == 1 else None)),
+            "latency_p95": round(_pct(lats, 95), 3) if n else None,
+            "latency_min": round(min(lats), 3) if n else None,
+            "latency_max": round(max(lats), 3) if n else None,
+            "tokens": b["tokens"] or None,
+            "rag_on": b["rag_on"],
+            "rag_off": b["rag_off"],
+            "models": sorted(b["models"]),
+        }
+    return {"providers": out, "order": _PROVIDERS,
+            "total_runs": total, "classified_runs": classified}
+
+
+@app.route("/api/stats")
+def api_stats():
+    return jsonify(_collect_stats())
 
 
 # --- API: base de conhecimento (RAG / CVE) e telemetria LLM ---

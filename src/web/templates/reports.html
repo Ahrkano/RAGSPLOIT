@@ -28,12 +28,39 @@
        font-size:13px;flex:1;background:#000}
   .modal-foot{display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap;
        padding:12px 16px;border-top:1px solid var(--border)}
+
+  /* Estatisticas por modelo */
+  .stat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:8px}
+  @media(max-width:780px){.stat-grid{grid-template-columns:repeat(2,1fr)}}
+  .stat-col{background:var(--panel2);border:1px solid var(--border);border-radius:8px;padding:12px}
+  .stat-col h3{margin:0 0 8px;font-size:14px;border:0;padding:0}
+  .stat-col.empty{opacity:.45}
+  .stat-col .m{display:flex;justify-content:space-between;gap:8px;font-size:12px;
+       padding:3px 0;border-bottom:1px dashed #242424}
+  .stat-col .m b{color:var(--green);font-weight:normal}
+  .stat-col .mk{color:var(--muted)}
+  .chart-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px;margin-top:16px}
+  .chart-box{background:var(--panel2);border:1px solid var(--border);border-radius:8px;padding:10px;height:240px}
 </style>
+<script src="/static/vendor/chart.umd.min.js"></script>
 {% endblock %}
 {% block body %}
 <h1>Relatorios</h1>
 
 <div class="msg" id="msg"></div>
+
+<div class="panel">
+  <h2>Estatisticas por modelo (pesquisa)</h2>
+  <p class="hint">Agregado dos runs com telemetria (schema atual).
+     Runs antigos sem os campos de classificacao nao entram aqui.
+     <span id="statSummary"></span></p>
+  <div class="stat-grid" id="statGrid"><p class="hint">carregando...</p></div>
+  <div class="chart-grid">
+    <div class="chart-box"><canvas id="chAcc"></canvas></div>
+    <div class="chart-box"><canvas id="chLat"></canvas></div>
+    <div class="chart-box"><canvas id="chPwn"></canvas></div>
+  </div>
+</div>
 
 <div class="panel">
   <h2>Logs de execucao ({{ logs|length }})</h2>
@@ -135,5 +162,58 @@ $("#btnDownload").addEventListener("click", ()=>{
   document.body.appendChild(a); a.click(); a.remove();
   URL.revokeObjectURL(url);
 });
+
+// --- Estatisticas por modelo ---
+const PROV_COLORS = {OpenAI:"#8be9fd", Google:"#50fa7b", Anthropic:"#bd93f9", Local:"#f1fa8c"};
+const charts = {};
+function pct(x){ return x==null ? "—" : (x*100).toFixed(1)+"%"; }
+function sfx(x,u){ return x==null ? "—" : x+u; }
+function mrow(k,v){ return `<div class="m"><span class="mk">${k}</span><b>${v}</b></div>`; }
+function pv(x,mult){ return x==null ? 0 : +(x*(mult||1)).toFixed(1); }
+
+async function loadStats(){
+  let d;
+  try{ d = await (await fetch("/api/stats")).json(); }
+  catch(e){ $("#statGrid").innerHTML='<p class="hint">falha ao carregar estatisticas</p>'; return; }
+  $("#statSummary").textContent =
+    ` ${d.classified_runs} run(s) classificado(s) de ${d.total_runs}.`;
+  const grid = $("#statGrid"); grid.innerHTML="";
+  d.order.forEach(p=>{
+    const s = d.providers[p];
+    const col = document.createElement("div");
+    col.className = "stat-col" + (s.runs===0 ? " empty" : "");
+    col.innerHTML = `<h3 style="color:${PROV_COLORS[p]}">${p}</h3>`
+      + mrow("Runs", s.runs)
+      + mrow("PWNED", s.pwned)
+      + mrow("Sucesso ataque", pct(s.attack_success_rate))
+      + mrow("Acuracia (JSON)", pct(s.accuracy))
+      + mrow("Sucesso LLM", pct(s.llm_success_rate))
+      + mrow("Erro LLM", pct(s.llm_error_rate))
+      + mrow("Latencia media", sfx(s.latency_avg,"s"))
+      + mrow("Desvio (std)", s.latency_std==null?"—":("±"+s.latency_std+"s"))
+      + mrow("p95", sfx(s.latency_p95,"s"))
+      + mrow("Chamadas", s.calls)
+      + mrow("Tokens", s.tokens==null?"—":s.tokens)
+      + mrow("RAG on/off", s.rag_on+" / "+s.rag_off);
+    grid.appendChild(col);
+  });
+  if(typeof Chart !== "undefined"){
+    const L = d.order, C = L.map(p=>PROV_COLORS[p]);
+    mkBar("chAcc","Acuracia (JSON valido) %", L, L.map(p=>pv(d.providers[p].accuracy,100)), C);
+    mkBar("chLat","Latencia media (s)",       L, L.map(p=>d.providers[p].latency_avg||0), C);
+    mkBar("chPwn","Sucesso do ataque %",      L, L.map(p=>pv(d.providers[p].attack_success_rate,100)), C);
+  }
+}
+function mkBar(id,title,labels,data,colors){
+  const ctx = document.getElementById(id);
+  if(charts[id]) charts[id].destroy();
+  charts[id] = new Chart(ctx,{type:"bar",
+    data:{labels,datasets:[{data,backgroundColor:colors,borderWidth:0}]},
+    options:{responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{display:false},title:{display:true,text:title,color:"#d7d7d7"}},
+      scales:{x:{ticks:{color:"#8a8a8a"},grid:{color:"#222"}},
+              y:{beginAtZero:true,ticks:{color:"#8a8a8a"},grid:{color:"#222"}}}}});
+}
+loadStats();
 </script>
 {% endblock %}

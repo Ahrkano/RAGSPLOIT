@@ -17,6 +17,7 @@ import time
 import atexit
 import threading
 import datetime
+import statistics
 
 METRICS_DIR = "/app/data/logs"
 LATEST = os.path.join(METRICS_DIR, "llm_metrics_latest.json")
@@ -70,12 +71,15 @@ class LLMMetrics:
         oks = sum(1 for c in calls if c["ok"])
         jv = sum(1 for c in calls if c["json_valid"])
         toks = [c["total_tokens"] for c in calls if c["total_tokens"]]
+        std = round(statistics.pstdev(lats), 3) if len(lats) > 1 else 0.0
         return {
             "provider": provider,
             "model": model,
             "run_started": datetime.datetime.fromtimestamp(started).isoformat(timespec="seconds"),
             "run_duration_s": round(time.time() - started, 1),
             "calls": n,
+            "ok": oks,                 # chamadas sem erro (contagem exata p/ pooling)
+            "json_valid": jv,          # respostas JSON validas (contagem exata)
             "errors": n - oks,
             "success_rate": round(oks / n, 3) if n else 0.0,
             # "acuracia": fracao de respostas que vieram em JSON valido
@@ -85,9 +89,41 @@ class LLMMetrics:
             "latency_min_s": round(min(lats), 3) if lats else 0.0,
             "latency_max_s": round(max(lats), 3) if lats else 0.0,
             "latency_p95_s": round(_pct(lats, 95), 3),
+            "latency_std_s": std,      # desvio padrao (populacional) da latencia
             "total_tokens": sum(toks) if toks else None,
             "updated": datetime.datetime.now().isoformat(timespec="seconds"),
         }
+
+    def write_run_record(self, status=None, target=None, rag_enabled=None,
+                         attacker=None):
+        """Grava um registro por-run (runstats_<stamp>.json) com um marcador de
+        schema, unindo a telemetria do LLM ao resultado do ataque. So os runs
+        com este schema entram nas estatisticas de pesquisa (por provedor)."""
+        s = self.summary()
+        with self._lock:
+            lat = [c["latency_s"] for c in self.calls]
+        rec = {
+            "schema": "ragsploit.run/1",
+            "provider": s["provider"],
+            "model": s["model"],
+            "target": target,
+            "attacker": attacker,
+            "status": status,                       # "PWNED" | "FALHA"
+            "pwned": (str(status).upper() == "PWNED"),
+            "rag_enabled": bool(rag_enabled) if rag_enabled is not None else None,
+            "timestamp": datetime.datetime.now().isoformat(timespec="seconds"),
+            "metrics": s,
+            "latencies": lat,
+        }
+        try:
+            os.makedirs(METRICS_DIR, exist_ok=True)
+            stamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+            with open(os.path.join(METRICS_DIR, f"runstats_{stamp}.json"),
+                      "w", encoding="utf-8") as f:
+                json.dump(rec, f, indent=2)
+        except Exception:
+            pass
+        return rec
 
     def dump(self):
         s = self.summary()
