@@ -40,7 +40,7 @@ import termios
 from datetime import timedelta
 
 from flask import (Flask, request, Response, render_template, jsonify,
-                   send_file, abort, session, redirect, url_for)
+                   abort, session, redirect, url_for)
 from flask_sock import Sock
 
 # --- PATHS e imports do projeto ---
@@ -56,8 +56,6 @@ from src import cve_sources                      # noqa: E402
 from src import wordlists                         # noqa: E402
 
 LOGS_DIR = "/app/data/logs"
-REPORT_FILE = "/app/data/pentest_report.html"
-GENERATE_REPORT = os.path.join(SRC, "generate_report.py")
 RAG_ADMIN = os.path.join(SRC, "rag_admin.py")
 VSTORE = os.getenv("CHROMA_PERSIST_DIR", "/app/data")
 CVE_FILE = "/app/config/ingest/kb_recent_threats.txt"
@@ -273,10 +271,7 @@ def run_page():
 @app.route("/reports")
 def reports_page():
     logs = _list_logs()
-    return render_template(
-        "reports.html", st=current_state(), logs=logs,
-        has_html=os.path.exists(REPORT_FILE),
-    )
+    return render_template("reports.html", st=current_state(), logs=logs)
 
 
 @app.route("/knowledge")
@@ -475,26 +470,6 @@ def api_report_html():
         text = f.read()
     return Response(_report_to_html(os.path.basename(path), text),
                     mimetype="text/html; charset=utf-8")
-
-
-@app.route("/api/report/generate", methods=["POST"])
-def api_report_generate():
-    try:
-        r = subprocess.run([sys.executable, GENERATE_REPORT],
-                           capture_output=True, text=True, cwd=BASE,
-                           env=os.environ.copy(), timeout=60)
-        ok = (r.returncode == 0 and os.path.exists(REPORT_FILE))
-        return jsonify({"ok": ok, "stdout": r.stdout[-2000:],
-                        "stderr": r.stderr[-2000:]}), (200 if ok else 500)
-    except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
-
-
-@app.route("/report.html")
-def report_html():
-    if not os.path.exists(REPORT_FILE):
-        abort(404)
-    return send_file(REPORT_FILE, mimetype="text/html")
 
 
 # --- API: base de conhecimento (RAG / CVE) e telemetria LLM ---

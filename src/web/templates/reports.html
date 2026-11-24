@@ -64,6 +64,7 @@
     <div class="modal-foot">
       <button class="ghost" id="btnCopy">Copiar texto</button>
       <button class="ghost" id="btnHtml">Abrir como HTML</button>
+      <button class="ghost" id="btnHtmlDl">Baixar HTML</button>
       <button class="ghost" id="btnDownload">Baixar .txt</button>
       <button onclick="closeReport()">Fechar</button>
     </div>
@@ -112,6 +113,19 @@ $("#btnCopy").addEventListener("click", async ()=>{
 $("#btnHtml").addEventListener("click", ()=>{
   if(!currentName) return;
   window.open("/api/report/html?name="+encodeURIComponent(currentName), "_blank");
+});
+$("#btnHtmlDl").addEventListener("click", async ()=>{
+  if(!currentName) return;
+  try{
+    const r = await fetch("/api/report/html?name="+encodeURIComponent(currentName));
+    if(!r.ok){ flash(false,"falha ao gerar HTML"); return; }
+    const blob = new Blob([await r.text()], {type:"text/html;charset=utf-8"});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = currentName.replace(/\.txt$/i, ".html");
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+  }catch(e){ flash(false,"erro ao baixar HTML"); }
 });
 $("#btnDownload").addEventListener("click", ()=>{
   const blob = new Blob([currentText], {type:"text/plain;charset=utf-8"});
