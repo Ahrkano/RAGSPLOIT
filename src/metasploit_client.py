@@ -112,10 +112,13 @@ class MetasploitClient:
         def _rank(item):
             return {"TARGET": 0, "PAYLOAD": 1}.get(item[0].upper(), 2)
 
+        # Valor vazio precisa de aspas: 'set PASSWORD' (sem valor) falha a
+        # validacao ("must be specified"); 'set PASSWORD '' ' define senha em
+        # branco (ex.: root do MySQL no Metasploitable2) e passa a validacao.
         ordered = sorted(options.items(), key=_rank)
         cmds = [
             f"use {module_type}/{module_name}",
-            *[f"set {k} {v}" for k, v in ordered],
+            *[(f"set {k} {v}" if str(v) != "" else f"set {k} ''") for k, v in ordered],
             "run -z"
         ]
         full_cmd = "\n".join(cmds)
@@ -142,7 +145,9 @@ class MetasploitClient:
         opts.setdefault("USER_AS_PASS", "true")
         opts.setdefault("VERBOSE", "false")
         opts.setdefault("BRUTEFORCE_SPEED", "4")
-        cmds = [f"use auxiliary/{mod}"] + [f"set {k} {v}" for k, v in opts.items()] + ["run -z"]
+        cmds = ([f"use auxiliary/{mod}"]
+                + [(f"set {k} {v}" if str(v) != "" else f"set {k} ''") for k, v in opts.items()]
+                + ["run -z"])
         print(f"[MSF] Login scan (arquivo): auxiliary/{mod}")
         return self.execute_command("\n".join(cmds), timeout=timeout, done_marker="% complete")
 

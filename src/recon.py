@@ -62,9 +62,12 @@ def _nmap_scan(target, ports=None, extra_args=None):
                 info["product"] = svc.get("product", "") or ""
                 info["version"] = svc.get("version", "") or ""
                 info["extrainfo"] = svc.get("extrainfo", "") or ""
-                cpe = svc.find("cpe")
-                if cpe is not None and cpe.text:
-                    info["cpe"] = cpe.text
+                info["ostype"] = svc.get("ostype", "") or ""
+                cpes = [c.text for c in svc.findall("cpe") if c.text]
+                # CPE de aplicacao (cpe:/a:) p/ info; CPE de SO (cpe:/o:) p/ OS.
+                info["cpe"] = next((c for c in cpes if not c.startswith("cpe:/o:")),
+                                   (cpes[0] if cpes else ""))
+                info["os_cpe"] = next((c for c in cpes if c.startswith("cpe:/o:")), "")
             # banner legivel consolidado
             info["banner"] = " ".join(
                 x for x in [info["service"], info["product"], info["version"],
@@ -123,16 +126,37 @@ def _py_scan(target, ports=None):
     return result
 
 
+def infer_os(ports):
+    """Deduz o SO do alvo a partir dos sinais do -sV (ostype, CPE de SO, produto,
+    extrainfo, banner) agregados sobre todas as portas. Sem -O (nao exige raiz/
+    raw sockets): usa o que a deteccao de servico ja revela. Retorna
+    'Linux' | 'Windows' | 'unknown'."""
+    text = " ".join(
+        " ".join([i.get("ostype", ""), i.get("os_cpe", ""), i.get("product", ""),
+                  i.get("extrainfo", ""), i.get("banner", "")]).lower()
+        for i in (ports or {}).values())
+    win = (text.count("windows") + text.count("microsoft")
+           + text.count("cpe:/o:microsoft"))
+    lin = (text.count("linux") + text.count("debian") + text.count("ubuntu")
+           + text.count("unix") + text.count("cpe:/o:linux"))
+    if win and win >= lin:
+        return "Windows"
+    if lin:
+        return "Linux"
+    return "unknown"
+
+
 def scan(target, ports=None, prefer_nmap=True):
     """Ponto de entrada. Retorna dict porta->info. Usa nmap se disponivel."""
     if prefer_nmap and nmap_available():
         try:
             res = _nmap_scan(target, ports=ports)
             if res:
-                return {"method": "nmap", "ports": res}
+                return {"method": "nmap", "ports": res, "os": infer_os(res)}
         except Exception as e:
             print(f"[RECON] nmap falhou ({e}); usando fallback Python.")
-    return {"method": "python", "ports": _py_scan(target, ports=ports)}
+    pyres = _py_scan(target, ports=ports)
+    return {"method": "python", "ports": pyres, "os": infer_os(pyres)}
 
 
 if __name__ == "__main__":

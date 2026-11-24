@@ -38,6 +38,7 @@ class LLMMetrics:
         self.provider = None
         self.started = time.time()
         self.calls = []
+        self.last_status = None  # resultado do ataque (PWNED/FALHA), p/ o resumo
 
     def reset(self, model=None, provider=None):
         with self._lock:
@@ -99,6 +100,7 @@ class LLMMetrics:
         """Grava um registro por-run (runstats_<stamp>.json) com um marcador de
         schema, unindo a telemetria do LLM ao resultado do ataque. So os runs
         com este schema entram nas estatisticas de pesquisa (por provedor)."""
+        self.last_status = status
         s = self.summary()
         with self._lock:
             lat = [c["latency_s"] for c in self.calls]
@@ -145,15 +147,18 @@ class LLMMetrics:
         s = self.summary()
         if s["calls"] == 0:
             return
-        print("\n=== TELEMETRIA LLM (run) ===")
-        print(f"  provider/model : {s['provider']} / {s['model']}")
-        print(f"  chamadas       : {s['calls']} (erros: {s['errors']})")
-        print(f"  acuracia (JSON): {s['json_valid_rate']*100:.1f}%  "
-              f"| sucesso: {s['success_rate']*100:.1f}%")
-        print(f"  latencia       : avg {s['latency_avg_s']}s | p95 {s['latency_p95_s']}s "
+        print("\n=== TELEMETRIA LLM (saude das chamadas ao modelo) ===")
+        print(f"  provider/model  : {s['provider']} / {s['model']}")
+        print(f"  chamadas ao LLM : {s['calls']} (falhas de chamada: {s['errors']})")
+        print(f"  JSON valido     : {s['json_valid_rate']*100:.1f}%  "
+              f"| chamadas sem erro: {s['success_rate']*100:.1f}%")
+        print(f"  latencia        : avg {s['latency_avg_s']}s | p95 {s['latency_p95_s']}s "
               f"| max {s['latency_max_s']}s | total {s['latency_total_s']}s")
         if s["total_tokens"]:
-            print(f"  tokens (total) : {s['total_tokens']}")
+            print(f"  tokens (total)  : {s['total_tokens']}")
+        if self.last_status:
+            print(f"  >>> RESULTADO DO ATAQUE: {self.last_status}  "
+                  f"(as taxas acima sao a saude do LLM, NAO o sucesso do ataque)")
         print("============================\n")
 
 
