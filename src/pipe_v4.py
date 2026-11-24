@@ -183,6 +183,48 @@ class PentestPipeline(PipelineBase):
                 if res and res.get('data'): print(f"{C_GREEN}{res['data'].strip()}{C_RESET}")
             except: break
 
+    _WEB_PORTS = {80, 443, 280, 591, 3000, 5000, 8000, 8008, 8080, 8081, 8088,
+                  8090, 8180, 8181, 8443, 8880, 8888, 8983, 9080, 9090, 9200}
+
+    def _is_web(self, port, banner):
+        """Heuristica: a porta serve HTTP(S)?"""
+        try:
+            svc = (self.services.get(port, {}).get("service", "") or "").lower()
+        except Exception:
+            svc = ""
+        b = (banner or "").lower()
+        if "http" in svc or "http" in b or "www" in svc:
+            return True
+        try:
+            return int(port) in self._WEB_PORTS
+        except Exception:
+            return False
+
+    def web_enumerate(self, port):
+        """RECON WEB: quando a porta e HTTP(S), descobre caminhos/apps (http-enum),
+        titulo, headers e metodos via nmap NSE, para o LLM escolher um exploit web
+        REAL e preencher TARGETURI. So COLETA informacao (nao decide o ataque)."""
+        import subprocess
+        scripts = "http-enum,http-title,http-headers,http-methods,http-robots.txt"
+        cmd = ["nmap", "-Pn", "-T4", "-p", str(port), "--script", scripts,
+               "--host-timeout", "100s", "-oN", "-", self.target_ip]
+        try:
+            out = subprocess.run(cmd, capture_output=True, text=True,
+                                 timeout=140).stdout
+        except Exception as e:
+            return f"(enumeracao web indisponivel: {e})"
+        keep = []
+        for ln in out.splitlines():
+            t = ln.strip()
+            if t.startswith("|") or "/tcp" in t or "http-" in t:
+                keep.append(t)
+        text = "\n".join(keep).strip()
+        if not text:
+            return "(nenhum caminho/app relevante descoberto na enumeracao web)"
+        if len(text) > 1800:
+            text = text[:1800] + "\n...(truncado)"
+        return text
+
     def run(self):
         self.cleanup_sessions()
         print(f"\n>>> [FASE 1] RECONHECIMENTO")
@@ -205,6 +247,16 @@ class PentestPipeline(PipelineBase):
 
         for port, banner in self.open_ports.items():
             print(f"\n{C_CYAN}--- ALVO: PORTA {port} ({banner}) ---{C_RESET}")
+
+            # RECON WEB primeiro: os achados enriquecem a QUERY do RAG e o prompt.
+            web_context = "(nao e um servico web)"
+            web_sig = ""
+            if self._is_web(port, banner):
+                print(f"\n{C_CYAN}--- [RECON WEB] enumerando porta {port} (nmap http NSE)... ---{C_RESET}")
+                web_context = self.web_enumerate(port)
+                print(f"{C_CYAN}{web_context}{C_RESET}\n")
+                web_sig = " ".join(l.strip() for l in web_context.splitlines()
+                                   if ("/" in l or "Powered" in l or "Server" in l or "DAV" in l))[:500]
             
             if not self.use_rag:
                 rag_context = ("AVISO RAG DESATIVADO: decida com base APENAS no "
@@ -213,9 +265,9 @@ class PentestPipeline(PipelineBase):
                 rag_context = "Nenhuma informacao especifica encontrada no RAG."
                 try:
                     query = (f"attack recipe for port {port} service banner {banner}: "
-                             f"which metasploit module, exact options and payload to use")
-                    docs = self.rag.query(query, k=6)
-                    if docs: rag_context = "\n\n".join([d.page_content for d in docs[:6]])
+                             f"which metasploit module, exact options and payload to use. {web_sig}")
+                    docs = self.rag.query(query, k=8)
+                    if docs: rag_context = "\n\n".join([d.page_content for d in docs[:8]])
                     print(f"\n{C_MAGENTA}=== [RAG DEBUG] MEMORIA RECUPERADA ==={C_RESET}")
                     print(f"{C_MAGENTA}{rag_context}{C_RESET}")
                     print(f"{C_MAGENTA}======================================{C_RESET}\n")
@@ -242,6 +294,11 @@ class PentestPipeline(PipelineBase):
             {rag_context}
             
             ----------------------------------------
+            WEB ENUMERATION (live findings for this port, if HTTP/HTTPS)
+            ----------------------------------------
+            {web_context}
+            
+            ----------------------------------------
             ANALYSIS RULES (MANDATORY)
             ----------------------------------------
             1. Base your reasoning STRICTLY on the service banner and the RAG context.
@@ -261,6 +318,12 @@ class PentestPipeline(PipelineBase):
                - Prefer login or authentication scanners before exploits and try brute force if viable.
             7. If uncertainty exists:
                - Choose a SAFE ENUMERATION strategy.
+            8. For HTTP/HTTPS services: a server banner (Apache/nginx/PHP) does NOT
+               identify the vulnerable app. Use the WEB ENUMERATION findings above:
+               pick a module that matches a DISCOVERED path/app and set the exact
+               path in the "TARGETURI" option (e.g. "TARGETURI": "/phpmyadmin/").
+               If nothing exploitable was discovered, prefer enumeration (e.g.
+               auxiliary/scanner/http/dir_scanner) or report findings.
                
             ----------------------------------------
             TASK

