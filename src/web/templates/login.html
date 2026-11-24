@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="pt-br">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RAGSPLOIT :: login</title>
+<style>
+  :root{
+    --bg:#050709; --panel:#141414; --panel2:#1b1b1b; --border:#2a2a2a;
+    --green:#50fa7b; --green-d:#2f8f4e; --cyan:#8be9fd; --purple:#bd93f9;
+    --yellow:#f1fa8c; --red:#ff5555; --fg:#d7d7d7; --muted:#8a8a8a;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0;background:var(--bg);color:var(--fg);overflow:hidden;
+       font-family:'Consolas','Monaco','SFMono-Regular',monospace;
+       display:flex;align-items:center;justify-content:center;position:relative}
+
+  /* ===== Agua-viva ASCII (canvas) nadando atras da caixa de login ===== */
+  #ascii-bg{position:fixed;inset:0;width:100%;height:100%;
+            z-index:0;pointer-events:none}
+
+  /* Vinheta sutil so para o card destacar (sem esconder a animacao) */
+  .vignette{position:fixed;inset:0;z-index:1;pointer-events:none;
+            background:radial-gradient(ellipse at center,rgba(5,7,9,0) 52%,rgba(5,7,9,.6) 100%)}
+
+  /* Caixa central de login */
+  .login{position:relative;z-index:2;width:380px;max-width:92vw;
+         background:var(--panel);border:1px solid var(--border);border-radius:12px;
+         padding:28px 26px 24px;box-shadow:0 0 0 1px rgba(80,250,123,.08),
+         0 18px 60px rgba(0,0,0,.65), 0 0 40px rgba(80,250,123,.06)}
+  .login::before{content:"";position:absolute;left:0;right:0;top:0;height:3px;
+         border-radius:12px 12px 0 0;background:linear-gradient(90deg,var(--green-d),var(--green),var(--cyan))}
+
+  .brand{color:var(--green);font-weight:bold;font-size:26px;letter-spacing:6px;margin:2px 0 2px}
+  .brand .x{color:var(--cyan)}
+  .tag{color:var(--muted);font-size:12px;letter-spacing:1px;margin-bottom:4px}
+  .prompt{color:var(--green-d);font-size:12px;margin:14px 0 18px}
+  .prompt .c{display:inline-block;width:8px;height:14px;background:var(--green);
+             margin-left:2px;vertical-align:-2px;animation:blink 1.1s step-end infinite}
+  @keyframes blink{50%{opacity:0}}
+
+  label{display:block;color:var(--muted);font-size:12px;margin:14px 0 5px;
+        text-transform:uppercase;letter-spacing:1px}
+  input[type=text],input[type=password]{width:100%;background:#0a0a0a;color:var(--fg);
+        border:1px solid var(--border);border-radius:6px;padding:11px 12px;font:inherit}
+  input:focus{outline:none;border-color:var(--green);
+        box-shadow:0 0 0 2px rgba(80,250,123,.15)}
+
+  button{width:100%;margin-top:22px;background:var(--green-d);color:#05140a;
+        border:1px solid var(--green);border-radius:6px;padding:12px 16px;
+        font:inherit;font-weight:bold;letter-spacing:2px;cursor:pointer;
+        text-transform:uppercase}
+  button:hover{background:var(--green)}
+
+  .err{margin-top:16px;padding:10px 12px;border-radius:6px;font-size:13px;
+       background:#2a1012;border:1px solid var(--red);color:var(--red)}
+
+  .foot{position:relative;z-index:2;margin-top:18px;text-align:center;
+        color:var(--muted);font-size:11px;letter-spacing:1px}
+</style>
+</head>
+<body>
+
+<canvas id="ascii-bg" aria-hidden="true"></canvas>
+<div class="vignette"></div>
+
+<div style="position:relative;z-index:2">
+  <form class="login" method="POST" action="/login{% if next and next != '/' %}?next={{ next }}{% endif %}">
+    <div class="brand">RAG<span class="x">SPLOIT</span></div>
+    <div class="tag">// RAG-augmented exploitation framework</div>
+    <div class="prompt">root@ragsploit:~# auth<span class="c"></span></div>
+
+    <input type="hidden" name="next" value="{{ next }}">
+
+    <label for="username">Usuário</label>
+    <input id="username" name="username" type="text" autocomplete="username"
+           autofocus spellcheck="false" autocapitalize="none">
+
+    <label for="password">Senha</label>
+    <input id="password" name="password" type="password" autocomplete="current-password">
+
+    <button type="submit">Acessar</button>
+
+    {% if error %}<div class="err">{{ error }}</div>{% endif %}
+  </form>
+  <div class="foot">ACESSO RESTRITO · USO AUTORIZADO EM LABORATÓRIO CONTROLADO</div>
+</div>
+
+<script>
+(function(){
+  const canvas = document.getElementById('ascii-bg');
+  const ctx = canvas.getContext('2d');
+
+  const CHARS = ' .:-=+*#%@';
+  const CELL_W = 8;
+  const CELL_H = 12;
+
+  let cols = 0;
+  let rows = 0;
+
+  function resize() {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+    cols = Math.ceil(canvas.width / CELL_W);
+    rows = Math.ceil(canvas.height / CELL_H);
+    ctx.font = '11px "Fira Code", Consolas, monospace';
+    ctx.textBaseline = 'top';
+  }
+  window.addEventListener('resize', resize);
+  resize();
+
+  // Configuracao dos tentaculos
+  const tentacles = Array.from({ length: 16 }, (_, i) => {
+    const spread = (i / 15) * 2 - 1; // -1 a 1
+    return {
+      offsetX: spread * 11.0,
+      length: 32 + Math.sin(i * 1.7) * 10 + (1 - Math.abs(spread)) * 8,
+      phase: i * 0.65,
+      freq: 0.13 + (i % 3) * 0.025,
+      amp: 2.4 + Math.abs(spread) * 2.8,
+      thickness: 1.15 + (1 - Math.abs(spread)) * 0.65
+    };
+  });
+
+  function render(timeMs) {
+    const t = timeMs * 0.001;
+
+    // Fundo preto profundo
+    ctx.fillStyle = '#050709';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // Posicao centralizada com nado suave pela tela
+    const cx = cols * 0.50 + Math.sin(t * 0.35) * (cols * 0.12);
+    const cy = rows * 0.34 + Math.cos(t * 0.5) * (rows * 0.08);
+
+    // Inclinacao organica
+    const angle = -0.35 + Math.sin(t * 0.35) * 0.14;
+    const cosA = Math.cos(angle);
+    const sinA = Math.sin(angle);
+
+    // Pulsacao da cupula
+    const pulse = Math.sin(t * 2.1);
+    const bellW = 19.0 + pulse * 2.0;
+    const bellH = 13.5 - pulse * 1.1;
+
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const dx = c - cx;
+        const dy = (r - cy) * 1.35;
+
+        const lx = dx * cosA - dy * sinA;
+        const ly = dx * sinA + dy * cosA;
+
+        let density = 0;
+        let colorType = 'cyan'; // 'cyan' | 'green' | 'white'
+
+        // 1. Cupula (Bell)
+        if (ly < 3.5 && ly > -bellH - 3) {
+          const nx = lx / bellW;
+          const ny = (ly + 2.0) / bellH;
+          const dist = nx * nx + ny * ny;
+
+          if (dist < 1.0 && ly < 2.5) {
+            const rim = Math.exp(-Math.abs(dist - 0.82) * 7.5);
+            const core = (1 - dist) * 0.75;
+            const noise = Math.sin(lx * 0.75 + t * 2) * Math.cos(ly * 0.9 - t) * 0.18;
+            density = Math.max(density, rim * 0.95 + core + noise);
+
+            if (dist < 0.42) colorType = 'green';
+            else if (rim > 0.65) colorType = 'white';
+          }
+        }
+
+        // 2. Tentaculos ondulantes
+        if (ly >= -1 && ly < 52) {
+          for (let i = 0; i < tentacles.length; i++) {
+            const ten = tentacles[i];
+            if (ly > ten.length) continue;
+
+            const progress = ly / ten.length;
+            const wave =
+              Math.sin(ly * ten.freq - t * 2.8 + ten.phase) *
+              ten.amp *
+              (0.25 + progress * 1.1);
+
+            const tx = ten.offsetX * (1 + progress * 0.35) + wave;
+            const distX = Math.abs(lx - tx);
+
+            if (distX < ten.thickness * 1.6) {
+              const fade = 1 - progress * 0.85;
+              const val = (1 - distX / (ten.thickness * 1.6)) * fade * 0.9;
+              if (val > density) {
+                density = val;
+                colorType =
+                  (i % 3 === 0 && progress > 0.25) ? 'green' :
+                  (val > 0.72 ? 'white' : 'cyan');
+              }
+            }
+          }
+        }
+
+        // 3. Desenho dos caracteres ASCII
+        if (density > 0.14) {
+          const charIdx = Math.min(
+            CHARS.length - 1,
+            Math.floor(density * (CHARS.length - 1))
+          );
+          const ch = CHARS[charIdx];
+
+          if (colorType === 'white') {
+            ctx.fillStyle = `rgba(226, 250, 255, ${Math.min(1, density)})`;
+          } else if (colorType === 'green') {
+            ctx.fillStyle = `rgba(34, 197, 94, ${Math.min(0.95, density * 0.95)})`;
+          } else {
+            ctx.fillStyle = `rgba(34, 211, 238, ${Math.min(0.95, density)})`;
+          }
+
+          ctx.fillText(ch, c * CELL_W, r * CELL_H);
+        }
+      }
+    }
+
+    requestAnimationFrame(render);
+  }
+
+  requestAnimationFrame(render);
+})();
+</script>
+
+</body>
+</html>

@@ -73,6 +73,7 @@
   <span class="statusbar">
     TARGET <b>{{ st.target }}</b> · MODEL <b>{{ st.model_short or '—' }}</b>
     · PROVIDER <b>{{ st.provider }}</b>
+    {% if session.user %}· <b>{{ session.user }}</b> · <a href="/logout">logout</a>{% endif %}
   </span>
 </header>
 <main>

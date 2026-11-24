@@ -37,7 +37,7 @@
       <label>Provedor</label>
       <select id="keyProvider">
         {% for p in st.providers %}
-        <option value="{{ p }}">{{ p }}{{ ' (tem chave)' if st.keys[p] else '' }}</option>
+        <option value="{{ p }}">{{ p }}{{ ' (tem chave)' if st.provider_keys[p] else '' }}</option>
         {% endfor %}
       </select>
     </div>

@@ -32,7 +32,13 @@ def clear_screen():
 
 
 def load_dot_env():
-    """Carrega variaveis do .env para o ambiente (sem dependencia externa)."""
+    """Carrega variaveis do .env para o ambiente (sem dependencia externa).
+
+    O .env e a fonte da verdade para chaves editadas em runtime: um valor real
+    no arquivo sobrescreve uma variavel AUSENTE ou PRESENTE-POReM-VAZIA no
+    ambiente (ex.: '' injetada pelo env_file no boot, antes de a chave existir).
+    Nao apaga um valor ja presente no ambiente quando a linha do .env esta vazia.
+    """
     if not os.path.exists(ENV_FILE):
         return
     try:
@@ -43,7 +49,10 @@ def load_dot_env():
                     continue
                 key, value = line.split('=', 1)
                 value = value.strip().strip("'").strip('"')
-                if key not in os.environ:
+                current = (os.environ.get(key) or "").strip()
+                # So escreve quando ha valor real no arquivo e o ambiente atual
+                # esta vazio/ausente — assim uma chave adicionada depois e lida.
+                if value and not current:
                     os.environ[key] = value
     except Exception:
         pass

@@ -13,7 +13,8 @@ Funcionalidades:
 SEGURANCA (ferramenta ofensiva):
   - Deve escutar apenas em rede do lab / 127.0.0.1 (ver docker-compose: o
     publish e 127.0.0.1:PORT, nunca 0.0.0.0 publico).
-  - Auth basica HTTP (WEBUI_USER / WEBUI_PASS).
+  - Login por sessao (pagina /login; cookie assinado). Credenciais em
+    WEBUI_USER / WEBUI_PASS; chave do cookie em WEBUI_SECRET_KEY (opcional).
   - O WebSocket usa um token efemero (gerado no boot e injetado nas paginas
     ja autenticadas), evitando depender de credenciais no handshake WS.
 """
@@ -34,7 +35,10 @@ import struct
 import fcntl
 import termios
 
-from flask import Flask, request, Response, render_template, jsonify, send_file, abort
+from datetime import timedelta
+
+from flask import (Flask, request, Response, render_template, jsonify,
+                   send_file, abort, session, redirect, url_for)
 from flask_sock import Sock
 
 # --- PATHS e imports do projeto ---
@@ -69,8 +73,14 @@ WEBUI_USER = os.getenv("WEBUI_USER", "admin")
 WEBUI_PASS = os.getenv("WEBUI_PASS", "ragsploit")
 # Token efemero para o WebSocket (renovado a cada boot do processo).
 WS_TOKEN = secrets.token_urlsafe(24)
+# Duracao da sessao autenticada (cookie assinado).
+SESSION_HOURS = float(os.getenv("WEBUI_SESSION_HOURS", "8"))
 
 app = Flask(__name__, template_folder=os.path.join(os.path.dirname(__file__), "templates"))
+# Chave para assinar o cookie de sessao. Se WEBUI_SECRET_KEY nao for definida,
+# gera uma por boot (reinicios do processo deslogam todos — aceitavel no lab).
+app.secret_key = os.getenv("WEBUI_SECRET_KEY") or secrets.token_hex(32)
+app.permanent_session_lifetime = timedelta(hours=SESSION_HOURS)
 sock = Sock(app)
 
 # Operacoes de base de conhecimento (reset/update) podem demorar (ingestao +
@@ -150,24 +160,59 @@ def _light_stats():
     }
 
 
-def _check_basic_auth(auth):
-    if not auth:
-        return False
-    return (hmac.compare_digest(auth.username or "", WEBUI_USER)
-            and hmac.compare_digest(auth.password or "", WEBUI_PASS))
+def _credentials_ok(user, pw):
+    return (hmac.compare_digest(user or "", WEBUI_USER)
+            and hmac.compare_digest(pw or "", WEBUI_PASS))
+
+
+def _safe_next(nxt):
+    """Evita open-redirect: so aceita caminho local (uma barra inicial)."""
+    if nxt and nxt.startswith("/") and not nxt.startswith("//"):
+        return nxt
+    return "/"
 
 
 @app.before_request
 def _enforce_auth():
-    # Rotas isentas: health (para healthcheck) e o WS (valida token proprio).
-    if request.path == "/health" or request.path.startswith("/ws/"):
+    p = request.path
+    # Rotas isentas: pagina de login, health (healthcheck) e o WS (valida
+    # token proprio). Assets estaticos tambem ficam liberados.
+    if (p == "/login" or p == "/health"
+            or p.startswith("/ws/") or p.startswith("/static/")):
         return None
-    if not _check_basic_auth(request.authorization):
-        return Response(
-            "Autenticacao necessaria.", 401,
-            {"WWW-Authenticate": 'Basic realm="RAGSPLOIT"'},
-        )
-    return None
+    if session.get("auth"):
+        return None
+    # Chamadas de API respondem 401 (o front trata); paginas vao ao /login.
+    if p.startswith("/api/"):
+        return jsonify({"error": "nao autenticado"}), 401
+    return redirect(url_for("login", next=p))
+
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if request.method == "POST":
+        user = request.form.get("username", "")
+        pw = request.form.get("password", "")
+        nxt = _safe_next(request.form.get("next") or request.args.get("next"))
+        if _credentials_ok(user, pw):
+            session.clear()
+            session.permanent = True
+            session["auth"] = True
+            session["user"] = WEBUI_USER
+            return redirect(nxt)
+        return render_template("login.html",
+                               error="Acesso negado: credenciais invalidas.",
+                               next=nxt), 401
+    if session.get("auth"):
+        return redirect("/")
+    return render_template("login.html", error=None,
+                           next=_safe_next(request.args.get("next")))
+
+
+@app.route("/logout")
+def logout():
+    session.clear()
+    return redirect(url_for("login"))
 
 
 # --- Estado / helpers de config ---
@@ -176,7 +221,9 @@ def current_state():
     conf = ms.load_current_config()
     provider = conf.get("provider", "google")
     model = conf.get("model", "")
-    keys = {p: bool(ms.get_provider_key(p)) for p in ms.PROVIDERS}
+    # NB: a chave deste dict NAO pode se chamar "keys" — no Jinja, {{ st.keys }}
+    # resolve para o metodo dict.keys, nao para o item. Usamos "provider_keys".
+    provider_keys = {p: bool(ms.get_provider_key(p)) for p in ms.PROVIDERS}
     return {
         "provider": provider,
         "model": model,
@@ -184,7 +231,7 @@ def current_state():
         "target": resolve_target(None),
         "default_target": DEFAULT_TARGET,
         "providers": list(ms.PROVIDERS.keys()),
-        "keys": keys,
+        "provider_keys": provider_keys,
         "temperature": conf.get("temperature", 0.1),
         "max_tokens": conf.get("max_tokens", 2000),
     }
