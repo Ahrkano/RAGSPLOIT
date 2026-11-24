@@ -64,8 +64,7 @@ CVE_STATE = os.path.join(LOGS_DIR, "cve_last_update.json")
 # Pipelines de alvo unico que aceitam --target (allowlist — nunca executamos
 # caminho arbitrario vindo do cliente).
 ALLOWED_PIPELINES = {
-    "pipe_v4.py": "Single Target (autonomo + shell interativo)",
-    "pipe_rag_onoff.py": "Single Target (RAG on/off)",
+    "pipe_v4.py": "Ataque autonomo (single target)",
 }
 
 # --- AUTH ---
@@ -499,8 +498,19 @@ def ws_run(ws):
 
     target = resolve_target((cfg.get("target") or "").strip() or None)
     extra = []
-    if cfg.get("disable_rag") and pipeline == "pipe_rag_onoff.py":
+    if cfg.get("disable_rag"):
         extra.append("--disable-rag")
+    # Porta opcional: vazio => recon completo (todas as portas); numero valido
+    # => restringe o ataque aquela porta. Validado como inteiro 1-65535 (argv e
+    # lista, sem shell, mas validamos para nao passar lixo ao pipeline).
+    port = cfg.get("port")
+    if port not in (None, "", False):
+        try:
+            pnum = int(port)
+            if 1 <= pnum <= 65535:
+                extra += ["--port", str(pnum)]
+        except (TypeError, ValueError):
+            pass
 
     argv = [sys.executable, os.path.join(SRC, pipeline), "--target", target] + extra
 
@@ -521,40 +531,38 @@ def ws_run(ws):
     ws.send(f"\r\n\033[92m>>> RAGSPLOIT :: {pipeline} --target {target} "
             f"{' '.join(extra)}\033[0m\r\n")
 
-    send_lock = threading.Lock()
-    stop = threading.Event()
-
-    def pump_pty_to_ws():
-        while not stop.is_set():
+    # IMPORTANTE: todas as operacoes do WebSocket (send E receive) ficam neste
+    # UNICO thread. simple_websocket nao suporta acesso concorrente ao mesmo
+    # socket por dois threads — a versao anterior lia o PTY num thread separado
+    # que chamava ws.send() enquanto este thread chamava ws.receive(), o que
+    # corrompia a maquina de estados e derrubava a conexao (ConnectionClosed
+    # 1000) logo apos o banner. Aqui um unico loop drena o PTY (select nao
+    # bloqueante) e le a entrada do cliente (receive com timeout curto).
+    try:
+        while True:
+            # 1) Saida do pipeline (PTY) -> cliente, priorizando esvaziar o PTY.
             try:
-                r, _, _ = select.select([master], [], [], 0.2)
+                r, _, _ = select.select([master], [], [], 0.05)
             except (OSError, ValueError):
                 break
             if master in r:
                 try:
-                    data = os.read(master, 4096)
+                    data = os.read(master, 65536)
                 except OSError:
-                    break
+                    data = b""
                 if not data:
-                    break
-                with send_lock:
-                    try:
-                        ws.send(data.decode(errors="ignore"))
-                    except Exception:
-                        break
-        stop.set()
-
-    reader = threading.Thread(target=pump_pty_to_ws, daemon=True)
-    reader.start()
-
-    try:
-        while not stop.is_set():
-            msg = ws.receive(timeout=1)
+                    break  # EOF do PTY -> processo encerrou
+                ws.send(data.decode(errors="ignore"))
+                continue
+            # 2) Entrada do cliente (teclado / resize), sem bloquear o loop.
+            try:
+                msg = ws.receive(timeout=0.05)
+            except Exception:
+                break  # cliente desconectou
             if msg is None:
-                if proc.poll() is not None:   # processo terminou
+                if proc.poll() is not None:   # processo terminou e PTY drenado
                     break
                 continue
-            # Mensagem de controle: redimensionamento do terminal.
             if msg.startswith('{') and '"resize"' in msg:
                 try:
                     dims = json.loads(msg)["resize"]
@@ -568,7 +576,6 @@ def ws_run(ws):
             except OSError:
                 break
     finally:
-        stop.set()
         try:
             os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
         except Exception:
@@ -577,11 +584,10 @@ def ws_run(ws):
             os.close(master)
         except Exception:
             pass
-        with send_lock:
-            try:
-                ws.send("\r\n\033[93m>>> Sessao encerrada.\033[0m\r\n")
-            except Exception:
-                pass
+        try:
+            ws.send("\r\n\033[93m>>> Sessao encerrada.\033[0m\r\n")
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":

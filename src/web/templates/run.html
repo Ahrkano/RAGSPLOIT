@@ -2,9 +2,9 @@
 {% set nav = 'run' %}
 {% block title %}Run{% endblock %}
 {% block head %}
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/xterm/5.3.0/css/xterm.min.css">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xterm/5.3.0/xterm.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xterm-addon-fit/0.8.0/xterm-addon-fit.min.js"></script>
+<link rel="stylesheet" href="/static/vendor/xterm.css">
+<script src="/static/vendor/xterm.js"></script>
+<script src="/static/vendor/xterm-addon-fit.js"></script>
 <style>
   #term{width:100%;height:60vh;min-height:360px;background:#000;border:1px solid var(--border);
         border-radius:8px;padding:8px}
@@ -12,6 +12,7 @@
   .ctl{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
   .dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--muted)}
   .dot.on{background:var(--green)} .dot.off{background:var(--red)}
+  .dot.idle{background:#d6a429}
 </style>
 {% endblock %}
 {% block body %}
@@ -26,7 +27,7 @@ nesta mesma janela. <code>exit</code> encerra o shell interativo do pipeline.</p
       <label>Pipeline</label>
       <select id="pipeline">
         {% for name, desc in pipelines.items() %}
-        <option value="{{ name }}">{{ name }} — {{ desc }}</option>
+        <option value="{{ name }}">{{ desc }}</option>
         {% endfor %}
       </select>
     </div>
@@ -34,8 +35,13 @@ nesta mesma janela. <code>exit</code> encerra o shell interativo do pipeline.</p
       <label>Alvo</label>
       <input type="text" id="target" value="{{ st.target }}" placeholder="{{ st.default_target }}">
     </div>
-    <label style="flex:0 0 auto;align-self:center;margin-top:18px">
-      <input type="checkbox" id="disableRag" style="width:auto"> desativar RAG
+    <div style="flex:0 0 auto;min-width:120px">
+      <label>Porta <span class="hint">(vazio = todas)</span></label>
+      <input type="number" id="port" min="1" max="65535" placeholder="recon completo" style="width:150px">
+    </div>
+    <label id="ragToggle" style="flex:0 0 auto;align-self:center;margin-top:18px">
+      <input type="checkbox" id="disableRag" style="width:auto"> desativar RAG (baseline)
+      <span class="hint" id="ragHint"></span>
     </label>
     <div style="flex:0 0 auto;margin-top:18px">
       <button id="btnStart">Iniciar</button>
@@ -58,25 +64,32 @@ term.open(document.getElementById("term"));
 fit.fit();
 let ws=null;
 const dot=document.getElementById("dot"), statusTxt=document.getElementById("statusTxt");
-function setStatus(on,txt){ dot.className="dot "+(on?"on":"off"); statusTxt.textContent=txt;
-  document.getElementById("btnStart").disabled=on;
-  document.getElementById("btnStop").disabled=!on; }
+function setStatus(state,txt){ // state: 'idle' | 'on' | 'off'
+  dot.className="dot "+state; statusTxt.textContent=txt;
+  const connected = state==="on";
+  document.getElementById("btnStart").disabled=connected;
+  document.getElementById("btnStop").disabled=!connected; }
+
+// Marcado => roda o ataque SEM RAG (baseline LLM puro, flag --disable-rag),
+// para contrastar com a execucao normal com RAG. Mesmo script (pipe_v4).
+document.getElementById("ragHint").textContent = "(marque p/ rodar sem RAG)";
 
 function start(){
   if(ws) return;
   const proto = location.protocol==="https:" ? "wss":"ws";
   ws = new WebSocket(`${proto}://${location.host}/ws/run?token=${encodeURIComponent(WS_TOKEN)}`);
   ws.onopen = ()=>{
-    setStatus(true,"conectado");
+    setStatus("on","conectado");
     ws.send(JSON.stringify({
       pipeline: document.getElementById("pipeline").value,
       target: document.getElementById("target").value.trim(),
-      disable_rag: document.getElementById("disableRag").checked
+      disable_rag: document.getElementById("disableRag").checked,
+      port: document.getElementById("port").value.trim()
     }));
     sendResize();
   };
   ws.onmessage = ev => term.write(ev.data);
-  ws.onclose = ()=>{ setStatus(false,"desconectado"); ws=null; };
+  ws.onclose = ()=>{ setStatus("off","desconectado (sessao encerrada)"); ws=null; };
   ws.onerror = ()=>{ term.write("\r\n[ws] erro de conexao\r\n"); };
 }
 function stop(){ if(ws){ ws.close(); } }
@@ -89,6 +102,6 @@ term.onData(d => { if(ws && ws.readyState===1) ws.send(d); });
 window.addEventListener("resize", ()=>{ fit.fit(); sendResize(); });
 document.getElementById("btnStart").addEventListener("click", start);
 document.getElementById("btnStop").addEventListener("click", stop);
-setStatus(false,"desconectado");
+setStatus("idle",'pronto — clique "Iniciar"');
 </script>
 {% endblock %}
