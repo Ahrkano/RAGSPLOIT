@@ -23,6 +23,7 @@ import re
 import sys
 import json
 import glob
+import html as _html
 import hmac
 import signal
 import select
@@ -341,7 +342,17 @@ def api_config():
 # Relatorio de execucao: <IP_com_underscores>_<AAAA-MM-DD>_<HH-MM-SS>.txt
 # (ex.: 192_168_70_30_2026-11-24_13-08-28.txt). Filtra loot/arquivos avulsos.
 _REPORT_RE = re.compile(
-    r"^\d{1,3}_\d{1,3}_\d{1,3}_\d{1,3}_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}\.txt$")
+    r"^(\d{1,3})_(\d{1,3})_(\d{1,3})_(\d{1,3})_"
+    r"(\d{4})-(\d{2})-(\d{2})_(\d{2})-(\d{2})-(\d{2})\.txt$")
+
+
+def _report_label(name):
+    """Rotulo amigavel: '192.168.70.30 | 24/11/2026 - 13:08:28'."""
+    m = _REPORT_RE.match(name)
+    if not m:
+        return name
+    o1, o2, o3, o4, Y, Mo, D, H, Mi, S = m.groups()
+    return f"{o1}.{o2}.{o3}.{o4} | {D}/{Mo}/{Y} - {H}:{Mi}:{S}"
 
 
 def _list_logs():
@@ -351,10 +362,12 @@ def _list_logs():
                    key=os.path.getmtime, reverse=True)
     out = []
     for f in files:
-        if not _REPORT_RE.match(os.path.basename(f)):
+        base = os.path.basename(f)
+        if not _REPORT_RE.match(base):
             continue
         out.append({
-            "name": os.path.basename(f),
+            "name": base,
+            "label": _report_label(base),
             "size": os.path.getsize(f),
             "mtime": int(os.path.getmtime(f)),
         })
@@ -378,6 +391,90 @@ def api_report_raw():
         abort(404)
     with open(path, "r", encoding="utf-8", errors="ignore") as f:
         return Response(f.read(), mimetype="text/plain; charset=utf-8")
+
+
+def _report_to_html(name, text):
+    """Converte um relatorio .txt (DATA/STATUS/PORTAS/HISTORICO/EVIDENCIAS)
+    num HTML standalone estilizado, especifico daquela execucao."""
+    e = _html.escape
+    data = status = portas = ""
+    hist, evid = [], []
+    section = None
+    for ln in text.splitlines():
+        s = ln.strip()
+        if s.startswith("DATA:"):
+            data = s[5:].strip()
+        elif s.startswith("STATUS:"):
+            status = s[7:].strip()
+        elif s.startswith("PORTAS:"):
+            portas = s[7:].strip()
+        elif s == "[HISTORICO]":
+            section = "h"
+        elif s == "[EVIDENCIAS]":
+            section = "e"
+        elif section == "h" and s.startswith("-"):
+            hist.append(s.lstrip("- ").strip())
+        elif section == "e" and s:
+            evid.append(ln)
+    pwned = status.upper() == "PWNED"
+    badge_cls = "pwned" if pwned else "failed"
+    # Portas: "['21', '22']" -> chips "21 22"
+    ports = re.findall(r"\d+", portas)
+    chips = "".join(f'<span class="chip">{p}</span>' for p in ports) or \
+        '<span class="muted">nenhuma</span>'
+    hist_html = ""
+    for h in hist:
+        ok = "SUCESSO" in h.upper()
+        hist_html += (f'<li class="{"ok" if ok else "no"}">'
+                      f'{"[+] " if ok else "[-] "}{e(h)}</li>')
+    if not hist_html:
+        hist_html = '<li class="muted">sem tentativas registradas</li>'
+    evid_txt = e("\n".join(evid).strip() or "sem evidencias")
+    label = e(_report_label(name))
+    return f"""<!DOCTYPE html>
+<html lang="pt-br"><head><meta charset="UTF-8">
+<title>Relatorio {label} - RAGSPLOIT</title>
+<style>
+  body{{font-family:'Consolas','Monaco',monospace;background:#0d0d0d;color:#ccc;margin:0;padding:28px}}
+  h1{{color:#50fa7b;border-bottom:2px solid #50fa7b;padding-bottom:10px;font-size:22px}}
+  h2{{color:#bd93f9;margin-top:28px;font-size:16px}}
+  .meta{{color:#888;font-size:13px;margin:6px 0 18px}}
+  .badge{{display:inline-block;padding:4px 12px;border-radius:4px;font-weight:bold;color:#05140a}}
+  .badge.pwned{{background:#50fa7b}} .badge.failed{{background:#ff5555;color:#190505}}
+  .card{{background:#1a1a1a;border:1px solid #333;border-left:5px solid #6272a4;
+         padding:14px 16px;margin:12px 0;border-radius:6px}}
+  .card.success{{border-left-color:#50fa7b}} .card.info{{border-left-color:#8be9fd}}
+  .chip{{display:inline-block;background:#111;border:1px solid #333;border-radius:999px;
+         padding:2px 10px;margin:3px;font-size:12px;color:#8be9fd}}
+  ul{{list-style:none;padding:0;margin:0}} li{{padding:4px 0}}
+  li.ok{{color:#50fa7b}} li.no{{color:#ff5555}} .muted{{color:#666}}
+  pre{{background:#000;border:1px solid #444;color:#f1fa8c;padding:12px;overflow-x:auto;white-space:pre-wrap}}
+  footer{{margin-top:40px;text-align:center;color:#444;font-size:12px}}
+</style></head><body>
+  <h1>RAGSPLOIT // RELATORIO DE EXECUCAO</h1>
+  <div class="meta">{label} &nbsp;|&nbsp; {e(data) or 'sem data'} &nbsp;|&nbsp;
+      <span class="badge {badge_cls}">{e(status or 'UNKNOWN')}</span></div>
+  <h2>Portas identificadas</h2>
+  <div class="card info">{chips}</div>
+  <h2>Timeline de tentativas</h2>
+  <div class="card success"><ul>{hist_html}</ul></div>
+  <h2>Evidencias de comprometimento</h2>
+  <div class="card"><pre>{evid_txt}</pre></div>
+  <footer>RAGSPLOIT - Autonomous Red Team Operations Platform<br>
+    Powered by LLM &amp; Metasploit Framework</footer>
+</body></html>"""
+
+
+@app.route("/api/report/html")
+def api_report_html():
+    name = request.args.get("name", "")
+    path = _safe_log_path(name)
+    if not path:
+        abort(404)
+    with open(path, "r", encoding="utf-8", errors="ignore") as f:
+        text = f.read()
+    return Response(_report_to_html(os.path.basename(path), text),
+                    mimetype="text/html; charset=utf-8")
 
 
 @app.route("/api/report/generate", methods=["POST"])

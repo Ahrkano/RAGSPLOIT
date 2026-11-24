@@ -9,7 +9,7 @@
        text-align:left;width:100%;background:var(--panel2);color:var(--fg);border:1px solid var(--border);
        border-radius:8px;padding:11px 13px;cursor:pointer;font:inherit;font-weight:normal}
   .report-grid button:hover{border-color:var(--green);color:var(--green);background:var(--panel2)}
-  .report-grid .rname{font-size:13px;word-break:break-all;line-height:1.35}
+  .report-grid .rname{font-size:13px;line-height:1.35}
   .report-grid .rmeta{font-size:11px;color:var(--muted)}
 
   /* Modal central */
@@ -36,25 +36,14 @@
 <div class="msg" id="msg"></div>
 
 <div class="panel">
-  <h2>Relatorio HTML consolidado</h2>
-  <p class="hint">Gerado a partir do loot em <code>/app/data/loot</code>.</p>
-  <div class="row">
-    <div style="flex:0 0 auto">
-      <button id="btnGen">(Re)gerar relatorio HTML</button>
-      <a class="btn ghost" href="/report.html" target="_blank"
-         id="openHtml" {{ '' if has_html else 'style=display:none' }}>Abrir relatorio HTML</a>
-    </div>
-  </div>
-</div>
-
-<div class="panel">
   <h2>Logs de execucao ({{ logs|length }})</h2>
   {% if logs %}
-  <p class="hint">Clique num relatorio para abri-lo numa janela central.</p>
+  <p class="hint">Clique num relatorio para abri-lo numa janela central
+    (copiar, abrir como HTML ou baixar .txt).</p>
   <div class="report-grid">
     {% for l in logs %}
-      <button data-name="{{ l.name }}" data-size="{{ l.size }}" onclick="openReport(this)">
-        <span class="rname">{{ l.name }}</span>
+      <button data-name="{{ l.name }}" onclick="openReport(this)">
+        <span class="rname">{{ l.label }}</span>
         <span class="rmeta">{{ l.size }} B</span>
       </button>
     {% endfor %}
@@ -74,6 +63,7 @@
     <pre class="modal-body" id="mBody"></pre>
     <div class="modal-foot">
       <button class="ghost" id="btnCopy">Copiar texto</button>
+      <button class="ghost" id="btnHtml">Abrir como HTML</button>
       <button class="ghost" id="btnDownload">Baixar .txt</button>
       <button onclick="closeReport()">Fechar</button>
     </div>
@@ -94,7 +84,7 @@ async function openReport(btn){
   if(!r.ok){ flash(false,"falha ao ler "+name); return; }
   currentName = name;
   currentText = await r.text();
-  $("#mTitle").textContent = name;
+  $("#mTitle").textContent = btn.querySelector(".rname").textContent || name;
   $("#mBody").textContent = currentText;
   $("#mBody").scrollTop = 0;
   overlay.classList.add("open");
@@ -104,7 +94,6 @@ function closeReport(){
   overlay.classList.remove("open");
   document.body.style.overflow = "";
 }
-// Fecha ao clicar fora da caixa ou com Esc
 overlay.addEventListener("click", e => { if(e.target === overlay) closeReport(); });
 document.addEventListener("keydown", e => { if(e.key === "Escape" && overlay.classList.contains("open")) closeReport(); });
 
@@ -113,13 +102,16 @@ $("#btnCopy").addEventListener("click", async ()=>{
     await navigator.clipboard.writeText(currentText);
     flash(true,"texto copiado para a area de transferencia.");
   }catch(err){
-    // Fallback (contextos sem Clipboard API)
     const ta=document.createElement("textarea"); ta.value=currentText;
     document.body.appendChild(ta); ta.select();
     try{ document.execCommand("copy"); flash(true,"texto copiado."); }
     catch(e2){ flash(false,"nao foi possivel copiar."); }
     document.body.removeChild(ta);
   }
+});
+$("#btnHtml").addEventListener("click", ()=>{
+  if(!currentName) return;
+  window.open("/api/report/html?name="+encodeURIComponent(currentName), "_blank");
 });
 $("#btnDownload").addEventListener("click", ()=>{
   const blob = new Blob([currentText], {type:"text/plain;charset=utf-8"});
@@ -128,14 +120,6 @@ $("#btnDownload").addEventListener("click", ()=>{
   a.href = url; a.download = currentName || "relatorio.txt";
   document.body.appendChild(a); a.click(); a.remove();
   URL.revokeObjectURL(url);
-});
-
-$("#btnGen").addEventListener("click", async ()=>{
-  $("#btnGen").disabled=true; flash(true,"gerando...");
-  const r=await fetch("/api/report/generate",{method:"POST"});
-  const d=await r.json(); $("#btnGen").disabled=false;
-  if(d.ok){ flash(true,"relatorio gerado."); const a=$("#openHtml"); a.style.display="";}
-  else flash(false, (d.error||d.stderr||"erro").slice(0,300));
 });
 </script>
 {% endblock %}
