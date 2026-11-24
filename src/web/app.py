@@ -19,6 +19,7 @@ SEGURANCA (ferramenta ofensiva):
     ja autenticadas), evitando depender de credenciais no handshake WS.
 """
 import os
+import re
 import sys
 import json
 import glob
@@ -337,6 +338,12 @@ def api_config():
 
 
 # --- API: relatorios ---
+# Relatorio de execucao: <IP_com_underscores>_<AAAA-MM-DD>_<HH-MM-SS>.txt
+# (ex.: 192_168_70_30_2026-11-24_13-08-28.txt). Filtra loot/arquivos avulsos.
+_REPORT_RE = re.compile(
+    r"^\d{1,3}_\d{1,3}_\d{1,3}_\d{1,3}_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}\.txt$")
+
+
 def _list_logs():
     if not os.path.isdir(LOGS_DIR):
         return []
@@ -344,6 +351,8 @@ def _list_logs():
                    key=os.path.getmtime, reverse=True)
     out = []
     for f in files:
+        if not _REPORT_RE.match(os.path.basename(f)):
+            continue
         out.append({
             "name": os.path.basename(f),
             "size": os.path.getsize(f),
