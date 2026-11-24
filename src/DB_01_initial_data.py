@@ -44,11 +44,23 @@ def main():
         print(f"[ERRO] Falha conexao MSF: {e}")
         return
 
-    # Lista Expandida de Termos
+    # Lista Expandida de Termos (ampliada p/ abrangencia do RAG)
     search_terms = [
-        "vsftpd", "samba", "distcc", "unreal_ircd", "postgresql", 
-        "drb", "tomcat", "java_rmi", "nfs", "bind", "apache", 
-        "telnet", "mysql", "proftpd", "ssh", "php", "manage/shell_to_meterpreter"
+        # servicos/produtos classicos
+        "vsftpd", "samba", "distcc", "unreal_ircd", "postgresql",
+        "drb", "tomcat", "java_rmi", "nfs", "bind", "apache",
+        "telnet", "mysql", "proftpd", "ssh", "php", "manage/shell_to_meterpreter",
+        # bancos de dados e caches
+        "mssql", "mongodb", "redis", "oracle", "mariadb",
+        # diretorio / rede / gerencia
+        "snmp", "ldap", "smb", "rdp", "winrm", "vnc", "rexec", "rlogin", "rsh",
+        "smtp", "exim", "postfix", "dns", "ntp", "ipmi", "rpcbind",
+        # web / app servers e CMS
+        "jboss", "weblogic", "jenkins", "struts", "drupal", "wordpress",
+        "joomla", "coldfusion", "webdav", "cgi", "http_login", "phpmyadmin",
+        "tikiwiki", "twiki", "shellshock",
+        # tecnicas de pos-exploracao / privilegio
+        "ms17_010", "eternalblue", "bluekeep", "sudo", "dirtycow", "udev",
     ]
     
     unique_modules = set()
