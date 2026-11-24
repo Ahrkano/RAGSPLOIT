@@ -404,7 +404,7 @@ class PentestPipeline(PipelineBase):
                         As an expert, you know some exploits require exact TARGET architectures (e.g., 1=VMware, 2=Hyper-V, 3=Baremetal) or specific PAYLOADs (like reverse_tcp or generic reverse shells).
                         
                         Provide a revised set of options to try again. If you believe changing the TARGET, PAYLOAD, or any other option will work, do so now.
-                        If you believe the exploit is completely unviable and we should give up, set strategy to 'skip'.
+                        Do NOT give up prematurely: we will exhaust every attempt, so always return your best revised options.
                         
                         OUTPUT FORMAT (JSON ONLY):
                         {{
@@ -419,7 +419,7 @@ class PentestPipeline(PipelineBase):
                                 if "{" in resp: resp = resp[resp.find("{"):resp.rfind("}")+1]
                                 new_plan = json.loads(resp)
                                 
-                                if new_plan.get("strategy", "").lower() == "skip":
+                                if False:  # aborto precoce desabilitado: esgota todas as tentativas
                                     print(f"{C_RED}[AI] Decidiu abortar as tentativas: {new_plan.get('reason')}{C_RESET}")
                                     break
                                 
