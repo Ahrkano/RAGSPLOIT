@@ -204,9 +204,10 @@ class PentestPipeline(PipelineBase):
             else:
                 rag_context = "Nenhuma informacao especifica encontrada no RAG."
                 try:
-                    query = f"metasploit module for service banner: {banner} port {port}"
-                    docs = self.rag.query(query)
-                    if docs: rag_context = "\n".join([d.page_content for d in docs[:3]])
+                    query = (f"attack recipe for port {port} service banner {banner}: "
+                             f"which metasploit module, exact options and payload to use")
+                    docs = self.rag.query(query, k=6)
+                    if docs: rag_context = "\n\n".join([d.page_content for d in docs[:6]])
                     print(f"\n{C_MAGENTA}=== [RAG DEBUG] MEMORIA RECUPERADA ==={C_RESET}")
                     print(f"{C_MAGENTA}{rag_context}{C_RESET}")
                     print(f"{C_MAGENTA}======================================{C_RESET}\n")

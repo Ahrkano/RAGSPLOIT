@@ -2,6 +2,7 @@
 import os
 import shutil
 import sys
+import re
 
 os.environ["ANONYMIZED_TELEMETRY"] = "False"
 os.environ["CHROMA_TELEMETRY_IMPL"] = "chromadb.telemetry.posthog.Posthog"
@@ -22,6 +23,24 @@ from langchain_core.documents import Document
 from langchain.embeddings import CacheBackedEmbeddings
 from langchain.storage import LocalFileStore
 from config import settings
+
+# Divide um texto em CARDS (1 card = 1 chunk no RAG). Um card abre com uma
+# linha de cabecalho no formato '=== TITULO ===' e vai ate o proximo card.
+# Textos sem esse padrao voltam inteiros (cai no splitter recursivo).
+_CARD_START = re.compile(r'(?m)^=== .+? ===\s*$')
+
+def _split_into_cards(text):
+    starts = [m.start() for m in _CARD_START.finditer(text)]
+    if len(starts) < 2:
+        return [text]
+    bounds = starts + [len(text)]
+    cards = []
+    for i in range(len(starts)):
+        chunk = text[bounds[i]:bounds[i + 1]].strip()
+        if chunk:
+            cards.append(chunk)
+    return cards
+
 
 class RagEngine:
     def __init__(self):
@@ -71,7 +90,7 @@ class RagEngine:
 
         # Quebra o texto em pedacos menores para melhor contexto
         splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1000,
+            chunk_size=2200,
             chunk_overlap=200,
             separators=["\n\n", "\n", " ", ""]
         )
@@ -79,8 +98,11 @@ class RagEngine:
         docs = []
         for i, text in enumerate(texts):
             meta = metadatas[i] if metadatas else {"source": "unknown"}
-            chunks = splitter.create_documents([text], metadatas=[meta])
-            docs.extend(chunks)
+            for card in _split_into_cards(text):
+                if len(card) <= 2200:
+                    docs.append(Document(page_content=card, metadata=dict(meta)))
+                else:
+                    docs.extend(splitter.create_documents([card], metadatas=[meta]))
 
         if docs:
             print(f"[RAG] Inserindo {len(docs)} vetores no banco...")
