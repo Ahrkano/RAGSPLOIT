@@ -50,3 +50,7 @@ Thumbs.db
 sessions/
 loot/
 data/vectorstore/wordlists/.cache/
+
+# ===== Dados de CVE gerados em runtime (coletor NVD/CIRCL/MITRE) =====
+# Regenerado pelo scheduler/orchestrator; nao versionar para evitar churn.
+config/ingest/kb_recent_threats.txt
