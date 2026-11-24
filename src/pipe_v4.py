@@ -176,22 +176,17 @@ class PentestPipeline(PipelineBase):
                 if res and res.get('data'): print(f"{C_GREEN}{res['data'].strip()}{C_RESET}")
             except: break
 
-    _WEB_PORTS = {80, 443, 280, 591, 3000, 5000, 8000, 8008, 8080, 8081, 8088,
-                  8090, 8180, 8181, 8443, 8880, 8888, 8983, 9080, 9090, 9200}
-
     def _is_web(self, port, banner):
-        """Heuristica: a porta serve HTTP(S)?"""
+        """A porta serve HTTP(S)? Decidido pela DETECCAO DE SERVICO do nmap (-sV),
+        nao por uma lista de portas hardcoded: o recon rotula http/https/
+        http-proxy/http-alt/ssl|http etc. Assim nenhuma porta recebe tratamento
+        especial - vale o que o reconhecimento identificou no alvo."""
         try:
             svc = (self.services.get(port, {}).get("service", "") or "").lower()
         except Exception:
             svc = ""
         b = (banner or "").lower()
-        if "http" in svc or "http" in b or "www" in svc:
-            return True
-        try:
-            return int(port) in self._WEB_PORTS
-        except Exception:
-            return False
+        return ("http" in svc or "www" in svc or "http" in b)
 
     def web_enumerate(self, port):
         """RECON WEB: quando a porta e HTTP(S), descobre caminhos/apps (http-enum),
