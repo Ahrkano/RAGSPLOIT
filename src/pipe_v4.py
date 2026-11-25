@@ -72,6 +72,7 @@ class PentestPipeline(PipelineBase):
         self.found_creds = []  # creds obtidas (brute) p/ reuso e chaining
         self._blocked_ports = set()  # portas cujo host bloqueou conexoes
         self.evidence = {}
+        self.engine_ledger = {}  # por porta: qual motor atacou (MSF vs TIER C) e porque
     
     def check_port(self, port):
         try:
@@ -122,6 +123,35 @@ class PentestPipeline(PipelineBase):
                 return "No Banner"
         except: return "No Banner"
 
+    def record_engine(self, port, engine, strategy="", detail="", outcome=None):
+        """Registra/atualiza, por porta, o MOTOR usado e o porque (rastreabilidade
+        de pesquisa). engine = METASPLOIT (TIER A/B) ou MANUAL (TIER C/RAG)."""
+        if not hasattr(self, "engine_ledger") or self.engine_ledger is None:
+            self.engine_ledger = {}
+        e = self.engine_ledger.get(str(port), {"port": str(port)})
+        e["engine"] = engine
+        if strategy: e["strategy"] = strategy
+        if detail: e["detail"] = detail
+        if outcome is not None: e["outcome"] = outcome
+        self.engine_ledger[str(port)] = e
+
+    def render_engine_ledger(self):
+        """Linhas (log + relatorio) que deixam EXPLICITO, por porta, qual motor
+        executou: METASPLOIT (quando ha modulo) vs EXPLORACAO MANUAL TIER C
+        (guiada por RAG, nos casos que o Metasploit nao cobre)."""
+        out = ["", "[MOTOR DE EXPLORACAO POR PORTA]",
+               "  (MSF = via Metasploit/modulo | MANUAL = TIER C guiado por RAG, sem modulo MSF)"]
+        led = getattr(self, "engine_ledger", None) or {}
+        if not led:
+            out.append("  (nenhuma decisao de ataque registrada)")
+            return out
+        for p in sorted(led, key=lambda x: int(x) if str(x).isdigit() else 0):
+            e = led[p]
+            out.append("  - porta %s: MOTOR=%s | estrategia=%s | %s | resultado=%s" % (
+                p, e.get("engine", "?"), e.get("strategy", "?"),
+                e.get("detail", ""), e.get("outcome", "(sem acesso)")))
+        return out
+
     # --- RELATORIO ---
     def generate_text_report(self):
         now = datetime.datetime.now()
@@ -129,11 +159,14 @@ class PentestPipeline(PipelineBase):
         filename = f"{safe_ip}_{now.strftime('%Y-%m-%d_%H-%M-%S')}.txt"
         filepath = os.path.join(LOOT_DIR, filename)
         
+        eng_lines = self.render_engine_ledger()
+        for _el in eng_lines:
+            print(f"{C_MAGENTA}{_el}{C_RESET}")   # tambem ao vivo nos logs
         lines = [
             "="*50, "RELATORIO FINAL", "="*50,
             f"DATA: {now}", f"STATUS: {'PWNED' if (self.session_id or self.manual_access) else 'FALHA'}", "-"*50,
-            f"PORTAS: {list(self.open_ports.keys())}", "\n[HISTORICO]"
-        ] + [f"- {h}" for h in self.history]
+            f"PORTAS: {list(self.open_ports.keys())}",
+        ] + eng_lines + ["\n[HISTORICO]"] + [f"- {h}" for h in self.history]
         
         if hasattr(self, 'evidence') and self.evidence.get("shell_info"):
              lines.append("\n[EVIDENCIAS]")
@@ -692,7 +725,25 @@ If the output above already proves execution on the target, set done=true.
             
             llm_options = plan.get('options', {})
             
-            if resp: print(f"{C_BLUE}[AI] Decisao: {strategy.upper()} | Modulo: '{module}'{C_RESET}")
+            if resp:
+                _msf_strats = ("exploit_cve", "brute_force", "enumeration")
+                if strategy in _msf_strats:
+                    _eng = "METASPLOIT (TIER A/B)"
+                    _why = "modulo: %s" % (module or "(a definir via msfconsole)")
+                elif strategy == "manual":
+                    _eng = "MANUAL (TIER C / RAG-guided)"
+                    _why = ("LLM decidiu exploracao manual guiada por RAG: Metasploit "
+                            "NAO cobre esta classe (ex.: logica/injecao de app web SPA)")
+                    _why = "".join(_why)
+                else:
+                    _eng = "NENHUM"; _why = "LLM decidiu nao atacar (skip)"
+                self.record_engine(port, _eng, strategy=strategy, detail=_why)
+                print(f"{C_BLUE}[AI] Decisao: {strategy.upper()} | Modulo: '{module}' | MOTOR: {_eng}{C_RESET}")
+                if strategy == "manual":
+                    print(f"{C_MAGENTA}[MOTOR] Porta {port}: EXPLORACAO MANUAL (TIER C) guiada por RAG "
+                          f"- Metasploit NAO cobre esta classe (sem modulo).{C_RESET}")
+                elif strategy in _msf_strats:
+                    print(f"{C_MAGENTA}[MOTOR] Porta {port}: via METASPLOIT ({strategy}) - {_why}.{C_RESET}")
 
             if not resp:
                 print(f"{C_RED}[LLM] Modelo indisponivel apos retries: sem decisao para a porta {port}. "
@@ -700,6 +751,11 @@ If the output above already proves execution on the target, set done=true.
                 continue
             if strategy == "manual":
                 self.run_manual_exploit(port, banner, web_context, rag_context)
+                if self.manual_access and str(self.manual_access.get("port")) == str(port):
+                    self.record_engine(port, "MANUAL (TIER C / RAG-guided)",
+                                       outcome="PWNED (foothold manual via TIER C, sem sessao MSF)")
+                else:
+                    self.record_engine(port, "MANUAL (TIER C / RAG-guided)", outcome="falhou")
                 if self.session_id or self.manual_access:
                     break
                 continue
@@ -797,6 +853,8 @@ If the output above already proves execution on the target, set done=true.
                 if sid and sid != before_sid:
                     self.session_id = sid
                     self.history.append(f"[SUCESSO] Porta {port} via {m_name} (sessao {sid})")
+                    self.record_engine(port, "METASPLOIT (TIER A/B)",
+                                       outcome=f"PWNED (sessao {sid} via MSF {m_name})")
                     print(f"\n{C_GREEN}[***] PWNED! Sessao {sid} via {m_name}.{C_RESET}")
                 elif creds:
                     self.history.append(f"[CRED] Porta {port} via {m_name}: {creds[:3]}")
@@ -840,6 +898,8 @@ If the output above already proves execution on the target, set done=true.
                             print(f"{C_GREEN}[***] SUCESSO ABSOLUTO! Exploit funcionou (Sessao {sid}){C_RESET}")
                             self.session_id = sid
                             self.history.append(f"[SUCESSO] Porta {port} via {m_type}/{m_name} (sessao {sid})")
+                            self.record_engine(port, "METASPLOIT (TIER A/B)",
+                                               outcome=f"PWNED (sessao {sid} via MSF {m_type}/{m_name})")
                             break # SESSAO OBTIDA
                     
                     print(f"{C_RED}[FALHA] Nenhuma sessao obtida na tentativa {attempt}.{C_RESET}")
@@ -946,7 +1006,12 @@ If the output above already proves execution on the target, set done=true.
                     # shell (webshell/PoC HTTP) o que o modulo MSF nao conseguiu.
                     if self._is_web(port, banner) or compat_wall:
                         print(f"{C_YELLOW}[*] Escalando para TIER C (exploracao manual)...{C_RESET}")
+                        self.record_engine(port, "MANUAL (TIER C / RAG-guided)", strategy="manual",
+                                           detail="escalou apos modulo Metasploit falhar (MSF nao resolveu)")
                         self.run_manual_exploit(port, banner, web_context, rag_context)
+                        if self.manual_access and str(self.manual_access.get("port")) == str(port):
+                            self.record_engine(port, "MANUAL (TIER C / RAG-guided)",
+                                               outcome="PWNED (TIER C apos falha do MSF)")
 
             if not (self.session_id or self.manual_access):
                 if strategy in ("brute_force", "enumeration", "exploit_cve") and len(tried) + 1 < MAX_STRATS and port not in self._blocked_ports:
