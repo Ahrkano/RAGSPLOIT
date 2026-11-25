@@ -9,10 +9,32 @@
   #term{width:100%;height:60vh;min-height:360px;background:#000;border:1px solid var(--border);
         border-radius:8px;padding:8px}
   .term-wrap{margin-top:14px}
-  .ctl{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
   .dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--muted)}
   .dot.on{background:var(--green)} .dot.off{background:var(--red)}
   .dot.idle{background:#d6a429}
+  /* ---- formulario de lancamento, agrupado por tipo ---- */
+  .launch{display:flex;flex-direction:column;gap:16px;margin:0}
+  .group{border:1px solid var(--border);border-radius:10px;padding:14px 16px;background:var(--panel2)}
+  .glabel{color:var(--purple);font-size:12px;text-transform:uppercase;letter-spacing:1px;
+          margin:0 0 12px;font-weight:bold}
+  .grid3{display:grid;grid-template-columns:1.5fr 1.1fr .9fr;gap:14px}
+  .field label{margin-top:0}
+  .field input,.field select{margin:0}
+  input[type=number]{width:100%;background:#0a0a0a;color:var(--fg);border:1px solid var(--border);
+          border-radius:6px;padding:9px 10px;font:inherit}
+  input[type=number]:focus{outline:none;border-color:var(--green)}
+  .opts{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .opt{display:flex;gap:10px;align-items:flex-start;border:1px solid var(--border);
+       border-radius:8px;padding:11px 12px;background:#0a0a0a;cursor:pointer;margin:0}
+  .opt:hover{border-color:var(--green)}
+  .opt input[type=checkbox]{width:16px;height:16px;margin:2px 0 0;accent-color:var(--green);flex:0 0 auto}
+  .opt .ot{display:flex;flex-direction:column;gap:2px}
+  .opt .ot b{color:var(--fg);font-size:13px}
+  .opt .ot span{color:var(--muted);font-size:11px}
+  .actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .actions .spacer{flex:1 1 auto}
+  .status{display:flex;align-items:center;gap:8px}
+  @media(max-width:680px){.grid3{grid-template-columns:1fr}.opts{grid-template-columns:1fr}}
 </style>
 {% endblock %}
 {% block body %}
@@ -22,38 +44,66 @@ quando o pipeline entra no <b>shell interativo pos-exploracao</b>, basta digitar
 nesta mesma janela. <code>exit</code> encerra o shell interativo do pipeline.</p>
 
 <div class="panel">
-  <div class="ctl">
-    <div style="flex:1;min-width:160px">
-      <label>Pipeline</label>
-      <select id="pipeline">
-        {% for name, desc in pipelines.items() %}
-        <option value="{{ name }}">{{ desc }}</option>
-        {% endfor %}
-      </select>
+  <form class="launch" onsubmit="return false">
+
+    <!-- Grupo 1: o QUE atacar -->
+    <div class="group">
+      <div class="glabel">Alvo &amp; escopo</div>
+      <div class="grid3">
+        <div class="field">
+          <label for="pipeline">Pipeline</label>
+          <select id="pipeline">
+            {% for name, desc in pipelines.items() %}
+            <option value="{{ name }}">{{ desc }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="field">
+          <label for="target">Alvo (IP)</label>
+          <input type="text" id="target" value="{{ st.target }}" placeholder="{{ st.default_target }}">
+        </div>
+        <div class="field">
+          <label for="port">Porta <span class="hint">(vazio = todas)</span></label>
+          <input type="number" id="port" min="1" max="65535" placeholder="recon completo">
+        </div>
+      </div>
     </div>
-    <div style="flex:1;min-width:140px">
-      <label>Alvo</label>
-      <input type="text" id="target" value="{{ st.target }}" placeholder="{{ st.default_target }}">
+
+    <!-- Grupo 2: modificadores da execucao -->
+    <div class="group">
+      <div class="glabel">Opções de execução</div>
+      <div class="opts">
+        <label class="opt" id="ragToggle">
+          <input type="checkbox" id="disableRag">
+          <span class="ot">
+            <b>Desativar RAG (baseline)</b>
+            <span id="ragHint">marque p/ rodar sem RAG</span>
+          </span>
+        </label>
+        <label class="opt">
+          <input type="checkbox" id="noBrute">
+          <span class="ot">
+            <b>Sem brute force</b>
+            <span>só exploits — não tenta wordlist de credenciais</span>
+          </span>
+        </label>
+      </div>
     </div>
-    <div style="flex:0 0 auto;min-width:120px">
-      <label>Porta <span class="hint">(vazio = todas)</span></label>
-      <input type="number" id="port" min="1" max="65535" placeholder="recon completo" style="width:150px">
+
+    <!-- Grupo 3: acoes + status -->
+    <div class="group">
+      <div class="actions">
+        <button type="button" id="btnStart">▶ Iniciar</button>
+        <button type="button" id="btnStop" class="danger" disabled>■ Parar</button>
+        <span class="spacer"></span>
+        <span class="status">
+          <span class="dot off" id="dot"></span>
+          <span id="statusTxt" class="hint">desconectado</span>
+        </span>
+      </div>
     </div>
-    <label id="ragToggle" style="flex:0 0 auto;align-self:center;margin-top:18px">
-      <input type="checkbox" id="disableRag" style="width:auto"> desativar RAG (baseline)
-      <span class="hint" id="ragHint"></span>
-    </label>
-    <label style="flex:0 0 auto;align-self:center;margin-top:18px">
-      <input type="checkbox" id="noBrute" style="width:auto"> sem brute force (so exploits)
-    </label>
-    <div style="flex:0 0 auto;margin-top:18px">
-      <button id="btnStart">Iniciar</button>
-      <button id="btnStop" class="danger" disabled>Parar</button>
-    </div>
-    <span style="flex:0 0 auto;margin-top:18px">
-      <span class="dot off" id="dot"></span> <span id="statusTxt" class="hint">desconectado</span>
-    </span>
-  </div>
+
+  </form>
   <div class="term-wrap"><div id="term"></div></div>
 </div>
 
