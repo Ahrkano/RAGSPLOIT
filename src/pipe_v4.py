@@ -123,6 +123,54 @@ class PentestPipeline(PipelineBase):
                 return "No Banner"
         except: return "No Banner"
 
+    def _extract_proof(self, output):
+        """Prova DETERMINISTICA a partir da resposta do servidor (sem LLM): se a
+        resposta contem um JWT (header.payload.signature), decodifica o PAYLOAD
+        (base64url) e devolve os campos sensiveis (email/role/isAdmin/id). Serve
+        para qualquer app que emita JWT, nao so o alvo atual. Sem JWT -> ""."""
+        import base64, json as _json, re as _re
+        if not output:
+            return ""
+        m = _re.search(r"([A-Za-z0-9_-]{10,})\.([A-Za-z0-9_-]{16,})(?:\.[A-Za-z0-9_-]*)?", output)
+        if not m:
+            return ""
+        seg = m.group(2)
+        seg += "=" * (-len(seg) % 4)   # corrige padding base64url
+        try:
+            payload = _json.loads(base64.urlsafe_b64decode(seg).decode("latin-1", "ignore"))
+        except Exception:
+            return ""
+        data = payload.get("data", payload) if isinstance(payload, dict) else {}
+        if not isinstance(data, dict):
+            data = {}
+        campos = {k: data.get(k) for k in ("id", "username", "email", "role",
+                  "isAdmin", "deluxeToken") if k in data}
+        resumo = ", ".join("%s=%s" % (k, v) for k, v in campos.items()) or "(payload sem campos de identidade)"
+        return "JWT emitido pelo servidor; payload decodificado (base64url) -> " + resumo
+
+    def save_evidence_file(self, port, request, success_check, response, proof=""):
+        """Salva um artefato de EVIDENCIA por foothold: requisicao enviada +
+        resposta crua do servidor + prova decodificada. Entregavel p/ a banca."""
+        now = datetime.datetime.now()
+        safe_ip = self.target_ip.replace(".", "_")
+        fn = "evidence_%s_%s_%s.txt" % (safe_ip, port, now.strftime("%Y-%m-%d_%H-%M-%S"))
+        fp = os.path.join(LOOT_DIR, fn)
+        blk = [
+            "=" * 60, "EVIDENCIA DE EXPLORACAO MANUAL (TIER C)", "=" * 60,
+            "DATA: %s" % now, "ALVO: %s:%s" % (self.target_ip, port),
+            "MOTOR: MANUAL (TIER C / guiado por RAG) - sem modulo Metasploit",
+            "-" * 60, "REQUISICAO ENVIADA (comando executado no atacante):", request,
+            "-" * 60, "PROVA (substring exigida presente na resposta): '%s'" % success_check,
+            "-" * 60, "RESPOSTA CRUA DO SERVIDOR:", (response or "")[:4000],
+        ]
+        if proof:
+            blk += ["-" * 60, "PROVA DECODIFICADA (deterministica):", proof]
+        blk.append("=" * 60)
+        with open(fp, "w") as f:
+            f.write("\n".join(blk))
+        print(f"{C_GREEN}[EVIDENCIA] artefato salvo: {fp}{C_RESET}")
+        return fp
+
     def record_engine(self, port, engine, strategy="", detail="", outcome=None):
         """Registra/atualiza, por porta, o MOTOR usado e o porque (rastreabilidade
         de pesquisa). engine = METASPLOIT (TIER A/B) ou MANUAL (TIER C/RAG)."""
@@ -168,9 +216,27 @@ class PentestPipeline(PipelineBase):
             f"PORTAS: {list(self.open_ports.keys())}",
         ] + eng_lines + ["\n[HISTORICO]"] + [f"- {h}" for h in self.history]
         
-        if hasattr(self, 'evidence') and self.evidence.get("shell_info"):
-             lines.append("\n[EVIDENCIAS]")
-             lines.append(f"SHELL INFO: {self.evidence['shell_info']}")
+        ev = getattr(self, 'evidence', {}) or {}
+        mp = ev.get("manual_proof")
+        if ev.get("shell_info") or mp:
+            lines.append("")
+            lines.append("[EVIDENCIAS]")
+            if ev.get("shell_info"):
+                lines.append("--- Sessao Metasploit (comando executado no shell do ALVO) ---")
+                lines.append("SHELL INFO: %s" % ev["shell_info"])
+            if ev.get("privesc"):
+                lines.append("PRIVESC CMD: %s" % ev["privesc"].get("command", ""))
+                lines.append((ev["privesc"].get("output", "") or "")[:800])
+            if mp:
+                lines.append("--- Exploracao manual TIER C: PROVA HTTP request/response ---")
+                lines.append("PORTA: %s" % mp.get("port"))
+                lines.append("REQUISICAO ENVIADA:")
+                lines.append("  %s" % mp.get("request", ""))
+                lines.append("PROVA (success_check casado na resposta): '%s'" % mp.get("success_check", ""))
+                lines.append("RESPOSTA CRUA DO SERVIDOR:")
+                lines.append((mp.get("response", "") or "")[:4000])
+                if mp.get("proof"):
+                    lines.append("PROVA DECODIFICADA (deterministica): %s" % mp["proof"])
 
         try:
             with open(filepath, "w") as f: f.write("\n".join(lines))
@@ -482,15 +548,26 @@ If the output above already proves execution on the target, set done=true.
                     output = (r.stdout or "") + (r.stderr or "")
                 except Exception as e:
                     output = f"[erro ao executar: {e}]"
-                output = output[:2000]
+                output = output[:4000]
                 print(f"{C_CYAN}{output}{C_RESET}")
                 history.append((cmd, output))
                 if check and check in output:
                     print(f"{C_GREEN}[***] SUCESSO MANUAL! '{check}' presente na saida.{C_RESET}")
+                    proof = self._extract_proof(output)
                     self.manual_access = {"port": port, "command": cmd,
-                                          "output": output}
+                                          "output": output, "success_check": check,
+                                          "proof": proof}
                     self.evidence["manual_shell"] = output
+                    self.evidence["manual_proof"] = {"port": port, "request": cmd,
+                                                     "success_check": check,
+                                                     "response": output, "proof": proof}
                     self.history.append(f"[SUCESSO MANUAL] Porta {port}: {cmd}")
+                    if proof:
+                        print(f"{C_GREEN}[PROVA] {proof}{C_RESET}")
+                    try:
+                        self.save_evidence_file(port, cmd, check, output, proof)
+                    except Exception as _e:
+                        print(f"{C_RED}[EVIDENCIA] nao salvou arquivo: {_e}{C_RESET}")
                     return True
         print(f"{C_RED}[MANUAL] Esgotadas as rodadas sem confirmar execucao.{C_RESET}")
         return False
