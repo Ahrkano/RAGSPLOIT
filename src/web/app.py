@@ -727,6 +727,8 @@ def ws_run(ws):
     extra = []
     if cfg.get("disable_rag"):
         extra.append("--disable-rag")
+    if cfg.get("no_brute"):
+        extra.append("--no-brute")
     # Porta opcional: vazio => recon completo (todas as portas); numero valido
     # => restringe o ataque aquela porta. Validado como inteiro 1-65535 (argv e
     # lista, sem shell, mas validamos para nao passar lixo ao pipeline).

