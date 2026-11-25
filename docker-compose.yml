@@ -72,6 +72,20 @@ services:
       - "2222:22"   
       - "2323:23"   
 
+  # Alvo WEB: OWASP Juice Shop (app deliberadamente vulneravel; SPA Angular +
+  # API Node/Express). Isolado na labnet, alvo do pipeline em 192.168.70.31:3000.
+  # SEGURANCA: publicado SO em 127.0.0.1:3001 para o pesquisador visualizar no
+  # navegador (nunca 0.0.0.0) - e um app vulneravel de proposito.
+  juiceshop:
+    image: bkimminich/juice-shop:v17.1.1
+    container_name: ragsploit_juiceshop
+    restart: unless-stopped
+    networks:
+      llm-rag_labnet:
+        ipv4_address: 192.168.70.31
+    ports:
+      - "127.0.0.1:3001:3000"
+
   localai-proxy:
     build: ./llm_proxy
     container_name: llm_proxy

