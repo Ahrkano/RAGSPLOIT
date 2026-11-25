@@ -274,7 +274,12 @@ class PentestPipeline(PipelineBase):
         alvo. Request/response (sem reverse shell): ideal p/ webshell e PoC HTTP.
         Retorna True se confirmou execucao (success_check presente na saida)."""
         import subprocess
-        tools = "curl, python3, perl, wget, bash (NO nc, NO searchsploit)"
+        tools = ("curl, wget, python3, perl, bash, openssl, nc, "
+                 "mysql/mariadb-client (use --skip-ssl on old MySQL 5.x), psql, "
+                 "smbclient (old SMB1: --option 'client min protocol=NT1'), snmpwalk, "
+                 "redis-cli. For legacy SSL/TLS use: "
+                 "openssl s_client -connect H:P -cipher 'ALL:@SECLEVEL=0' -tls1. "
+                 "No searchsploit yet.")
         history = []
         print(f"\n{C_MAGENTA}>>> [FASE 3] EXPLORACAO (MANUAL / TIER C){C_RESET}")
         for rnd in range(1, max_rounds + 1):
@@ -294,7 +299,7 @@ KNOWLEDGE BASE (RAG):
 
 TOOLS on the attacker shell: {tools}. Prefer REQUEST/RESPONSE code execution
 (e.g. upload a webshell via WebDAV PUT, then GET it with a command) over reverse
-shells (there is NO nc here). Target each command at {self.target_ip}.
+shells (nc + native clients available; pick the one matching the SERVICE BANNER: web->curl; mysql->'mysql --skip-ssl'; smb->smbclient; old SSL->openssl s_client @SECLEVEL=0). Target each command at {self.target_ip}.
 
 COMMANDS ALREADY RUN AND THEIR OUTPUT:
 {hist_txt}
@@ -666,6 +671,7 @@ If the output above already proves execution on the target, set done=true.
                 
                 max_attempts = 3
                 tried_payloads = set()
+                compat_wall = False
                 for attempt in range(1, max_attempts + 1):
                     opts["DisablePayloadHandler"] = opts.get("DisablePayloadHandler", "false")
                     if opts.get("PAYLOAD"):
@@ -692,7 +698,7 @@ If the output above already proves execution on the target, set done=true.
                     print(f"{C_RED}[FALHA] Nenhuma sessao obtida na tentativa {attempt}.{C_RESET}")
                     _low = (mod_output or "").lower()
                     if ("is blocked" in _low or "many connection errors" in _low
-                            or "connection timed" in _low or "max_connect_errors" in _low):
+                            or "max_connect_errors" in _low):
                         print(f"{C_RED}[CONNECTION WALL] Alvo recusando/limitando conexoes "
                               f"(host bloqueado por excesso de erros ou timeout de conexao). "
                               f"Nao e problema de payload/opcoes e retentar PIORA o bloqueio. "
@@ -701,6 +707,15 @@ If the output above already proves execution on the target, set done=true.
                         break
                     
                     # SE FALHOU, PEDE CORREÇÃO DO ERRO
+                    if ("scramble" in _low or "invalid packet" in _low or "connection timed" in _low
+                            or "wrong version number" in _low or "handshake failure" in _low
+                            or "unsupported protocol" in _low or "sslv" in _low
+                            or "no cipher" in _low or "not a compatible payload" in _low):
+                        print(f"{C_RED}[COMPAT WALL] Cliente do Metasploit nao fala o protocolo "
+                              f"deste servico antigo (auth/SSL/payload incompativel). Ajustar payload "
+                              f"NAO resolve. Abortando o MSF e escalando para TIER C (cliente nativo).{C_RESET}")
+                        compat_wall = True
+                        break
                     if attempt < max_attempts:
                         print(f"{C_YELLOW}[*] Consultando a IA Estrategista para recalcular os parametros...{C_RESET}")
                         _enc_wall = "encoders failed to encode" in (mod_output or "").lower()
@@ -782,7 +797,7 @@ If the output above already proves execution on the target, set done=true.
                     print(f"{C_RED}[FALHA GERAL] Todas as tentativas de exploit falharam.{C_RESET}")
                     # Escala p/ TIER C (manual) em servicos web: o LLM tenta via
                     # shell (webshell/PoC HTTP) o que o modulo MSF nao conseguiu.
-                    if self._is_web(port, banner):
+                    if self._is_web(port, banner) or compat_wall:
                         print(f"{C_YELLOW}[*] Escalando para TIER C (exploracao manual)...{C_RESET}")
                         self.run_manual_exploit(port, banner, web_context, rag_context)
 
