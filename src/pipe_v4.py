@@ -194,24 +194,105 @@ class PentestPipeline(PipelineBase):
                 or "http" in svc or "www" in svc or "http" in b)
 
     def web_enumerate(self, port):
-        """RECON WEB: quando a porta e HTTP(S), descobre caminhos/apps (http-enum),
-        titulo, headers e metodos via nmap NSE, para o LLM escolher um exploit web
-        REAL e preencher TARGETURI. So COLETA informacao (nao decide o ataque)."""
-        import subprocess
-        scripts = "http-enum,http-title,http-headers,http-methods,http-robots.txt"
-        cmd = ["nmap", "-Pn", "-T4", "-p", str(port), "--script", scripts,
-               "--host-timeout", "100s", "-oN", "-", self.target_ip]
+        """RECON WEB: COLETA informacao (nao decide o ataque). Enumeracao NATIVA
+        (urllib) que funciona em QUALQUER porta/SPA mesmo quando o nmap nao
+        reconhece o servico (portrule http-* falha): pagina raiz + headers/Server,
+        titulo, robots/sitemap, bundles JS de SPA e rotas extraidas deles, e probe
+        de endpoints comuns. Complementa com nmap NSE http-* (util em http padrao:
+        acha /dav, http-enum) e faz merge dos achados."""
+        import ssl
+        from urllib.request import Request, urlopen
+        from urllib.error import HTTPError, URLError
+        from urllib.parse import urljoin, urlparse
+        info = self.services.get(port, {}) if hasattr(self, "services") else {}
+        scheme = "https" if "https" in str(info.get("service", "")).lower() else "http"
+        base = "%s://%s:%s" % (scheme, self.target_ip, port)
+        ctx = ssl._create_unverified_context()
+        findings, seen = [], set()
+
+        def _add(line):
+            line = (line or "").strip()
+            if line and line not in seen:
+                seen.add(line); findings.append(line)
+
+        def _get(path, limit=200000):
+            try:
+                req = Request(base + path, headers={"User-Agent": "ragsploit-recon",
+                                                    "Accept": "*/*"})
+                r = urlopen(req, timeout=6, context=ctx)
+                return r.getcode(), dict(r.headers), r.read(limit)
+            except HTTPError as e:
+                try: body = e.read(limit)
+                except Exception: body = b""
+                return e.code, dict(getattr(e, "headers", {}) or {}), body
+            except Exception:
+                return None, {}, b""
+
+        code, hdrs, body = _get("/")
+        if code is not None:
+            _add("GET / -> HTTP %s" % code)
+            for h in ("Server", "X-Powered-By", "WWW-Authenticate", "DAV",
+                      "Allow", "Set-Cookie", "Content-Security-Policy"):
+                v = hdrs.get(h)
+                if v: _add("%s: %s" % (h, str(v)[:160]))
+            html = body.decode("latin-1", "ignore")
+            mt = re.search(r"(?is)<title[^>]*>(.*?)</title>", html)
+            if mt: _add("title: " + re.sub(r"\s+", " ", mt.group(1)).strip()[:120])
+            for mg in re.finditer(r"(?i)(generator|application-name)\W+content=\"([^\"]+)\"", html):
+                _add("meta %s: %s" % (mg.group(1), mg.group(2)[:80]))
+            scripts = re.findall(r"(?i)<script[^>]+src=\"([^\"]+)\"", html)
+            for p in ("/robots.txt", "/sitemap.xml"):
+                c2, _h2, b2 = _get(p, 8000)
+                if c2 and 200 <= c2 < 300 and b2.strip():
+                    _txt = b2.decode("latin-1", "ignore"); _low = _txt.lower()
+                    if "<!doctype html" in _low or "<html" in _low:
+                        continue   # SPA devolve index.html p/ rota inexistente: ignora
+                    for ln in _txt.splitlines()[:15]:
+                        ln = ln.strip()
+                        if ln and not ln.startswith("#"): _add("%s: %s" % (p, ln[:120]))
+            routes = set()
+            for srcn in scripts[:8]:
+                try: u = urljoin(base + "/", srcn)
+                except Exception: continue
+                pu = urlparse(u)
+                if pu.hostname and pu.hostname != str(self.target_ip): continue
+                sp = (pu.path or "/").split("?")[0]
+                if not sp.endswith(".js"): continue
+                c3, _h3, b3 = _get(sp, 3000000)
+                if c3 and 200 <= c3 < 300:
+                    js = b3.decode("latin-1", "ignore")
+                    pat = (r"[\"'`](/?(?:rest|api|graphql|ftp|administration|profile|"
+                           r"redirect|b2b|metrics|snippets|dataerasure|promotion|"
+                           r"score-board|encryptionkeys)[A-Za-z0-9_\-/]*)[\"'`]")
+                    for m in re.finditer(pat, js):
+                        rt = m.group(1)
+                        if not rt.startswith("/"): rt = "/" + rt
+                        routes.add(rt.split("?")[0][:60])
+            for rt in sorted(routes)[:25]: _add("route: " + rt)
+            _root = (body[:2000] if body else b"")
+            for p in ("/rest", "/api", "/graphql", "/.git/HEAD", "/actuator",
+                      "/swagger.json", "/openapi.json", "/ftp"):
+                c4, _h4, b4 = _get(p, 4000)
+                if not c4 or c4 in (404, 501):
+                    continue
+                if c4 == 200 and _root and b4[:2000] == _root:
+                    continue   # catch-all da SPA (mesma index.html): nao e endpoint real
+                _add("probe %s -> HTTP %s" % (p, c4))
+
         try:
-            out = subprocess.run(cmd, capture_output=True, text=True,
-                                 timeout=140).stdout
-        except Exception as e:
-            return f"(enumeracao web indisponivel: {e})"
-        keep = []
-        for ln in out.splitlines():
-            t = ln.strip()
-            if t.startswith("|") or "/tcp" in t or "http-" in t:
-                keep.append(t)
-        text = "\n".join(keep).strip()
+            import subprocess
+            scripts_n = "http-enum,http-title,http-headers,http-methods,http-robots.txt"
+            cmd = ["nmap", "-Pn", "-T4", "-p", str(port), "--script", scripts_n,
+                   "--host-timeout", "100s", "-oN", "-", self.target_ip]
+            out = subprocess.run(cmd, capture_output=True, text=True, timeout=140).stdout
+            for ln in out.splitlines():
+                t = ln.strip()
+                if t.startswith("|") or "http-" in t:   # NAO as linhas N/tcp open (ruido)
+                    _add(t.lstrip("|_ ").strip())
+        except Exception:
+            pass
+
+        text = "\n".join(findings).strip()
         if not text:
             return "(nenhum caminho/app relevante descoberto na enumeracao web)"
         if len(text) > 1800:
@@ -418,8 +499,22 @@ If the output above already proves execution on the target, set done=true.
                 print(f"\n{C_CYAN}--- [RECON WEB] enumerando porta {port} (nmap http NSE)... ---{C_RESET}")
                 web_context = self.web_enumerate(port)
                 print(f"{C_CYAN}{web_context}{C_RESET}\n")
-                web_sig = " ".join(l.strip() for l in web_context.splitlines()
-                                   if ("/" in l or "Powered" in l or "Server" in l or "DAV" in l))[:500]
+                _sig = []
+                for _l in web_context.splitlines():
+                    _t = _l.strip(); _low = _t.lower()
+                    if not _t:
+                        continue
+                    if (re.match(r"^\d+/tcp", _t) or _low.startswith("nmap ")
+                            or _low.startswith("starting nmap") or "scan report" in _low
+                            or "host is up" in _low or _low.startswith("not shown")):
+                        continue   # eco do nmap / estado de porta: ruido que polui a query
+                    if (_t.startswith("route:") or _t.startswith("/")
+                            or _low.startswith(("title:", "server:", "x-powered-by:",
+                                                "meta ", "probe ", "get "))
+                            or "dav" in _low or "powered" in _low
+                            or "www-authenticate" in _low or "set-cookie" in _low):
+                        _sig.append(_t)
+                web_sig = " ".join(_sig)[:500]
             
             if not self.use_rag:
                 rag_context = ("AVISO RAG DESATIVADO: decida com base APENAS no "
@@ -427,9 +522,30 @@ If the output above already proves execution on the target, set done=true.
             else:
                 rag_context = "Nenhuma informacao especifica encontrada no RAG."
                 try:
-                    query = (f"attack recipe for port {port} service banner {banner}: "
-                             f"which metasploit module, exact options and payload to use. {web_sig}")
-                    docs = self.rag.query(query, k=8)
+                    docs = []
+                    if self._is_web(port, banner):
+                        q_web = (f"web application exploitation recipe for {banner} "
+                                 f"on port {port}: SQL and NoSQL injection, broken "
+                                 f"authentication and JWT, access control IDOR, XSS "
+                                 f"and business logic flaws; manual tactics, endpoints "
+                                 f"and payloads. {web_sig}")
+                        q_msf = (f"attack recipe for web service {banner} port {port}: "
+                                 f"which metasploit module, exact options, TARGETURI and "
+                                 f"payload. {web_sig}")
+                        _seen = set()
+                        for _q in (q_web, q_msf):
+                            try:
+                                for _d in self.rag.query(_q, k=5):
+                                    _k = _d.page_content[:120]
+                                    if _k not in _seen:
+                                        _seen.add(_k); docs.append(_d)
+                            except Exception:
+                                pass
+                        docs = docs[:8]
+                    else:
+                        query = (f"attack recipe for port {port} service banner {banner}: "
+                                 f"which metasploit module, exact options and payload to use. {web_sig}")
+                        docs = self.rag.query(query, k=8)
                     if docs: rag_context = "\n\n".join([d.page_content for d in docs[:8]])
                     if self._is_web(port, banner):
                         _wac = self.web_app_cards(web_context)
