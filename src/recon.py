@@ -109,6 +109,121 @@ def _py_banner(target, port):
         return "unknown"
 
 
+def _looks_http(info):
+    """A porta JA parece HTTP pelo que o nmap retornou (service/banner)?"""
+    svc = (info.get("service", "") or "").lower()
+    b = (info.get("banner", "") or "").lower()
+    return ("http" in svc or "www" in svc or "http" in b)
+
+
+def _http_probe(target, port, timeout=3.0):
+    """Sonda HTTP(S) de fallback: confirma se a porta fala HTTP mesmo quando o
+    nmap NAO consegue fingerprintar (ex.: SPA/Node em porta nao-padrao que o
+    -sV rotula 'ppp'). E deteccao MECANICA de protocolo pela RESPOSTA real
+    (status line / headers / <title>), NAO um atalho hardcoded por porta.
+    Retorna {service, banner, is_http, server, title, powered_by} ou None."""
+    req = ("GET / HTTP/1.1\r\nHost: {h}\r\nUser-Agent: ragsploit-recon\r\n"
+           "Accept: */*\r\nConnection: close\r\n\r\n").format(h=target)
+
+    def _attempt(use_ssl):
+        raw = None
+        try:
+            raw = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            raw.settimeout(timeout)
+            raw.connect((target, int(port)))
+            s = raw
+            if use_ssl:
+                import ssl
+                s = ssl._create_unverified_context().wrap_socket(
+                    raw, server_hostname=str(target))
+            s.sendall(req.encode("latin-1", "ignore"))
+            data = b""
+            while len(data) < 16384:
+                try:
+                    chunk = s.recv(4096)
+                except Exception:
+                    break
+                if not chunk:
+                    break
+                data += chunk
+            s.close()
+            return data
+        except Exception:
+            if raw is not None:
+                try:
+                    raw.close()
+                except Exception:
+                    pass
+            return None
+
+    def _parse(data, scheme):
+        if not data:
+            return None
+        text = data.decode("latin-1", "ignore")
+        if not re.match(r"HTTP/\d\.\d\s+\d{3}", text):
+            return None
+        head = text.split("\r\n\r\n", 1)[0]
+
+        def _h(name):
+            m = re.search(r"(?im)^" + re.escape(name) + r":\s*(.+?)\s*$", head)
+            return m.group(1).strip() if m else ""
+
+        server, powered = _h("Server"), _h("X-Powered-By")
+        mt = re.search(r"(?is)<title[^>]*>(.*?)</title>", text)
+        title = re.sub(r"\s+", " ", mt.group(1)).strip()[:80] if mt else ""
+        extras = " ".join(x for x in [server, powered,
+                          ("title: " + title) if title else ""] if x)
+        banner = (scheme + (" " + extras if extras else "")).strip()
+        return {"service": scheme, "is_http": True, "server": server,
+                "title": title, "powered_by": powered, "banner": banner}
+
+    # 1) HTTP em claro.
+    data = _attempt(False)
+    if data is not None:
+        res = _parse(data, "http")
+        if res:
+            return res
+        if data:  # recebeu dados mas nao e HTTP -> servico plaintext; nao tenta TLS
+            return None
+    # 2) TLS (a porta pode exigir handshake: https).
+    return _parse(_attempt(True), "https")
+
+
+def _enrich_http(target, ports_dict):
+    """Pos-processa o recon: para cada porta aberta confirma HTTP(S) via sonda
+    direta. Se o nmap JA identificou web, so marca is_http=True (preserva o
+    banner rico do -sV). Se NAO (ex.: rotulo 'ppp'), re-rotula service=http(s) e
+    enriquece o banner - isso destrava _is_web/enum-web/RAG no pipeline. E
+    GENERICO: vale para servico web em qualquer porta/host, sem lista fixa."""
+    if not ports_dict:
+        return ports_dict
+
+    def _probe(item):
+        pid, info = item
+        try:
+            if _looks_http(info):
+                info["is_http"] = True
+                return
+            res = _http_probe(target, pid)
+            if res:
+                info["service"] = res["service"]
+                info["is_http"] = True
+                info["banner"] = res["banner"]
+                for k in ("server", "title", "powered_by"):
+                    if res.get(k):
+                        info[k] = res[k]
+        except Exception:
+            pass
+
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=16) as ex:
+            list(ex.map(_probe, list(ports_dict.items())))
+    except Exception:
+        for it in list(ports_dict.items()):
+            _probe(it)
+    return ports_dict
+
+
 def _py_scan(target, ports=None):
     ports = ports or FALLBACK_PORTS
     found = []
@@ -152,10 +267,12 @@ def scan(target, ports=None, prefer_nmap=True):
         try:
             res = _nmap_scan(target, ports=ports)
             if res:
+                _enrich_http(target, res)
                 return {"method": "nmap", "ports": res, "os": infer_os(res)}
         except Exception as e:
             print(f"[RECON] nmap falhou ({e}); usando fallback Python.")
     pyres = _py_scan(target, ports=ports)
+    _enrich_http(target, pyres)
     return {"method": "python", "ports": pyres, "os": infer_os(pyres)}
 
 

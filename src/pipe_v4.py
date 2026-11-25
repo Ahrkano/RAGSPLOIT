@@ -190,7 +190,8 @@ class PentestPipeline(PipelineBase):
         except Exception:
             svc = ""
         b = (banner or "").lower()
-        return ("http" in svc or "www" in svc or "http" in b)
+        return (self.services.get(port, {}).get("is_http", False)
+                or "http" in svc or "www" in svc or "http" in b)
 
     def web_enumerate(self, port):
         """RECON WEB: quando a porta e HTTP(S), descobre caminhos/apps (http-enum),
