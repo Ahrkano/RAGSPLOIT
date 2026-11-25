@@ -39,6 +39,7 @@ class LLMMetrics:
         self.started = time.time()
         self.calls = []
         self.last_status = None  # resultado do ataque (PWNED/FALHA), p/ o resumo
+        self.hallucinations = []  # artefatos inventados pelo modelo e refutados
 
     def reset(self, model=None, provider=None):
         with self._lock:
@@ -46,6 +47,7 @@ class LLMMetrics:
             self.provider = provider
             self.started = time.time()
             self.calls = []
+            self.hallucinations = []
 
     def record(self, latency, ok, json_valid, prompt_chars=0, resp_chars=0,
                input_tokens=None, output_tokens=None, total_tokens=None, error=None):
@@ -63,9 +65,24 @@ class LLMMetrics:
                 "error": error,
             })
 
+    def record_hallucination(self, kind, detail=""):
+        """Alucinacao (definicao operacional): o modelo AFIRMOU um artefato
+        CONCRETO que a realidade refutou por verificacao objetiva. Tipos:
+          - 'modulo_inexistente': nomeou um modulo Metasploit que nao existe
+            nesta instalacao (checado via msfconsole/RPC verify_module_exists);
+          - 'opcao_inexistente': setou uma datastore option que o modulo nao
+            possui ('Unknown datastore option' no output real do MSF).
+        Nao conta erro de formato (JSON) nem indisponibilidade de API - esses
+        tem metricas proprias."""
+        with self._lock:
+            self.hallucinations.append({
+                "kind": kind, "detail": str(detail)[:200],
+                "ts": datetime.datetime.now().isoformat(timespec="seconds")})
+
     def summary(self):
         with self._lock:
             calls = list(self.calls)
+            hall = list(self.hallucinations)
             model, provider, started = self.model, self.provider, self.started
         n = len(calls)
         lats = [c["latency_s"] for c in calls]
@@ -92,6 +109,10 @@ class LLMMetrics:
             "latency_p95_s": round(_pct(lats, 95), 3),
             "latency_std_s": std,      # desvio padrao (populacional) da latencia
             "total_tokens": sum(toks) if toks else None,
+            "tokens_avg_call": round(sum(toks) / len(toks), 1) if toks else None,
+            "hallucinations": len(hall),               # nº de artefatos inventados e refutados
+            "hallucination_rate": round(len(hall) / n, 3) if n else 0.0,  # por chamada ao LLM
+            "hallucination_detail": hall,
             "updated": datetime.datetime.now().isoformat(timespec="seconds"),
         }
 
@@ -143,22 +164,73 @@ class LLMMetrics:
             pass
         return s
 
+    def aggregate_attack_accuracy(self, model=None):
+        """Acuracia de ATAQUE agregada sobre todos os runs ja gravados
+        (runstats_*.json, schema ragsploit.run/1): fracao de runs com status
+        PWNED. 'Atacou e invadiu => sucesso.' Retorna o geral e, se model for
+        dado, tambem o recorte do modelo. Esta e a metrica principal do
+        documento de desempenho (NAO a saude da API)."""
+        pwned = total = 0
+        pwned_m = total_m = 0
+        try:
+            for fn in os.listdir(METRICS_DIR):
+                if not (fn.startswith("runstats_") and fn.endswith(".json")):
+                    continue
+                try:
+                    with open(os.path.join(METRICS_DIR, fn), encoding="utf-8") as f:
+                        rec = json.load(f)
+                except Exception:
+                    continue
+                if rec.get("schema") != "ragsploit.run/1":
+                    continue
+                total += 1
+                if rec.get("pwned"):
+                    pwned += 1
+                if model and rec.get("model") == model:
+                    total_m += 1
+                    if rec.get("pwned"):
+                        pwned_m += 1
+        except Exception:
+            pass
+        return {"pwned": pwned, "total": total,
+                "accuracy": round(pwned / total, 3) if total else 0.0,
+                "model": model, "pwned_model": pwned_m, "total_model": total_m,
+                "accuracy_model": round(pwned_m / total_m, 3) if total_m else 0.0}
+
     def print_summary(self):
         s = self.summary()
         if s["calls"] == 0:
             return
-        print("\n=== TELEMETRIA LLM (saude das chamadas ao modelo) ===")
-        print(f"  provider/model  : {s['provider']} / {s['model']}")
-        print(f"  chamadas ao LLM : {s['calls']} (falhas de chamada: {s['errors']})")
-        print(f"  JSON valido     : {s['json_valid_rate']*100:.1f}%  "
-              f"| chamadas sem erro: {s['success_rate']*100:.1f}%")
-        print(f"  latencia        : avg {s['latency_avg_s']}s | p95 {s['latency_p95_s']}s "
-              f"| max {s['latency_max_s']}s | total {s['latency_total_s']}s")
-        if s["total_tokens"]:
-            print(f"  tokens (total)  : {s['total_tokens']}")
+        pwned_now = str(self.last_status).upper() == "PWNED" if self.last_status else None
+        agg = self.aggregate_attack_accuracy(model=s["model"])
+        # ---- Desempenho da ferramenta: a metrica PRINCIPAL e o ataque ----
+        print("\n=== DESEMPENHO DA FERRAMENTA (metrica principal: exploracao) ===")
         if self.last_status:
-            print(f"  >>> RESULTADO DO ATAQUE: {self.last_status}  "
-                  f"(as taxas acima sao a saude do LLM, NAO o sucesso do ataque)")
+            _res = "SUCESSO (invadiu)" if pwned_now else "FALHA (nao invadiu)"
+            print(f"  sucesso no exploit (este run) : {_res} [{self.last_status}]")
+        print(f"  acuracia de ataque (agregada) : {agg['accuracy']*100:.1f}%  "
+              f"({agg['pwned']}/{agg['total']} runs PWNED)")
+        if agg["total_model"]:
+            print(f"    - recorte deste modelo      : {agg['accuracy_model']*100:.1f}%  "
+                  f"({agg['pwned_model']}/{agg['total_model']} runs)")
+        print(f"  latencia por chamada LLM      : avg {s['latency_avg_s']}s | "
+              f"desvio-padrao {s['latency_std_s']}s | p95 {s['latency_p95_s']}s | "
+              f"max {s['latency_max_s']}s | total {s['latency_total_s']}s")
+        if s["total_tokens"]:
+            print(f"  tokens                        : total {s['total_tokens']} "
+                  f"(media/chamada {s['tokens_avg_call']})")
+        print(f"  alucinacao do modelo          : {s['hallucinations']} ocorrencia(s) "
+              f"[taxa {s['hallucination_rate']*100:.1f}% por chamada] "
+              f"(modulo/opcao inexistente proposto e refutado pelo MSF)")
+        for h in s["hallucination_detail"][:5]:
+            print(f"      - {h['kind']}: {h['detail']}")
+        # ---- Saude da interacao com o modelo (NAO e sucesso do ataque) ----
+        print("\n=== SAUDE DA INTERACAO COM O MODELO (nao e o sucesso do ataque) ===")
+        print(f"  provider/model                : {s['provider']} / {s['model']}")
+        print(f"  disponibilidade da API        : {s['success_rate']*100:.1f}%  "
+              f"({s['ok']}/{s['calls']} chamadas concluidas; falhas de API: {s['errors']})")
+        print(f"  aderencia de formato (JSON)   : {s['json_valid_rate']*100:.1f}%  "
+              f"({s['json_valid']}/{s['calls']} respostas em JSON valido)")
         print("============================\n")
 
 

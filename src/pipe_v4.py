@@ -853,6 +853,7 @@ If the output above already proves execution on the target, set done=true.
             # 2. Verifica se o modulo existe
             if not self.msf.verify_module_exists("auxiliary", clean_name) and \
                not self.msf.verify_module_exists("exploit", clean_name):
+                METRICS.record_hallucination("modulo_inexistente", module)
                 # Autocorrecao AUTONOMA: o erro volta ao LLM para ele re-decidir
                 # (sem heuristica hardcoded de substituicao de modulo).
                 # TIER A: pergunta ao msfconsole os modulos REAIS desta instalacao
@@ -963,6 +964,9 @@ If the output above already proves execution on the target, set done=true.
                     print(f"{C_YELLOW}[DEBUG] Opcoes injetadas pela IA: {opts}{C_RESET}")
                     
                     mod_output = self.msf.run_module(m_type, m_name, opts) or ""
+                    if mod_output and "unknown datastore option" in mod_output.lower():
+                        for _opt in re.findall(r"(?i)Unknown datastore option:?\s*([A-Za-z0-9_]+)", mod_output):
+                            METRICS.record_hallucination("opcao_inexistente", f"{m_name}: {_opt}")
                     if mod_output.strip():
                         print(f"{C_YELLOW}[MSF OUTPUT]\n{mod_output}{C_RESET}")
                     print(f"{C_YELLOW}[DEBUG] Exploit enviado. Aguardando 20s...{C_RESET}")
@@ -1068,6 +1072,7 @@ If the output above already proves execution on the target, set done=true.
                                         m_type, m_name = "exploit", cn
                                         print(f"{C_BLUE}[AI] Trocando de modulo para: exploit/{m_name}{C_RESET}")
                                     else:
+                                        METRICS.record_hallucination("modulo_inexistente", nm)
                                         print(f"{C_RED}[AI] Modulo sugerido invalido: {nm} (mantendo o atual){C_RESET}")
                                 for _rk in (new_plan.get("remove_options") or []):
                                     opts.pop(_rk, None)
