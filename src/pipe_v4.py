@@ -279,7 +279,21 @@ class PentestPipeline(PipelineBase):
                  "smbclient (old SMB1: --option 'client min protocol=NT1'), snmpwalk, "
                  "redis-cli. For legacy SSL/TLS use: "
                  "openssl s_client -connect H:P -cipher 'ALL:@SECLEVEL=0' -tls1. "
-                 "No searchsploit yet.")
+                 "searchsploit (Exploit-DB: 'searchsploit <product> <version>' finds PoCs; "
+                 "'searchsploit -m <EDB-ID>' copies one to the cwd, then run it with "
+                 "python3/perl/ruby/bash).")
+        from src import searchsploit as _ss
+        _info = self.services.get(port, {}) if hasattr(self, "services") else {}
+        _terms = (f"{_info.get('product','')} {_info.get('version','')}".strip() or banner or "").strip()
+        sploit_context = _ss.search_text(_terms) if _ss.available() else ""
+        if sploit_context:
+            print(f"{C_CYAN}--- [SEARCHSPLOIT] PoCs do Exploit-DB para '{_terms}' ---{C_RESET}")
+            print(f"{C_CYAN}{sploit_context}{C_RESET}")
+        workdir = f"/tmp/ragsploit_work/{self.target_ip}_{port}"
+        try:
+            os.makedirs(workdir, exist_ok=True)
+        except Exception:
+            workdir = "/tmp"
         history = []
         print(f"\n{C_MAGENTA}>>> [FASE 3] EXPLORACAO (MANUAL / TIER C){C_RESET}")
         for rnd in range(1, max_rounds + 1):
@@ -300,6 +314,9 @@ KNOWLEDGE BASE (RAG):
 TOOLS on the attacker shell: {tools}. Prefer REQUEST/RESPONSE code execution
 (e.g. upload a webshell via WebDAV PUT, then GET it with a command) over reverse
 shells (nc + native clients available; pick the one matching the SERVICE BANNER: web->curl; mysql->'mysql --skip-ssl'; smb->smbclient; old SSL->openssl s_client @SECLEVEL=0). Target each command at {self.target_ip}.
+
+EXPLOIT-DB CANDIDATES (standalone PoCs; `searchsploit -m <EDB-ID>` copies one into the cwd, then run it with python3/perl/ruby/bash pointed at {self.target_ip}:{port}):
+{sploit_context}
 
 COMMANDS ALREADY RUN AND THEIR OUTPUT:
 {hist_txt}
@@ -333,7 +350,7 @@ If the output above already proves execution on the target, set done=true.
                 print(f"{C_YELLOW}[MANUAL] $ {cmd}{C_RESET}")
                 try:
                     r = subprocess.run(["bash", "-c", cmd], capture_output=True,
-                                       text=True, timeout=30)
+                                       text=True, timeout=90, cwd=workdir)
                     output = (r.stdout or "") + (r.stderr or "")
                 except Exception as e:
                     output = f"[erro ao executar: {e}]"
