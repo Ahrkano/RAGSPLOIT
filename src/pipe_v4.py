@@ -410,19 +410,32 @@ Return JSON ONLY:
   "done": false,
   "reason": "what you are trying and why"
 }}
+PAYLOAD / SHELL-QUOTING RULES (the #1 cause of failed web PoCs - follow exactly):
+- A single quote ' is LITERAL in a JSON body: send a plain ' and do NOT
+  backslash-escape it nor use any hex/unicode escape for it. In a URL use %27.
+- A body containing ' must NOT be wrapped in shell SINGLE quotes (the ' closes
+  the quote). For HTTP that sends JSON, STRONGLY PREFER python3 over curl: build
+  a dict and json.dumps it (Python does all the escaping), and wrap the whole
+  python3 -c "..." in shell DOUBLE quotes. This sidesteps every quoting trap.
+- success_check must be PROOF in the HTTP response: an auth token field (e.g.
+  "token" or "authentication") or dumped protected data - NOT uid= for web logic.
+
 If the output above already proves execution on the target, set done=true.
 """
-            resp = self.ask_llm_robust(prompt)
-            if not resp:
-                print(f"{C_RED}[MANUAL] LLM sem resposta.{C_RESET}")
-                return False
-            try:
-                if "{" in resp:
-                    resp = resp[resp.find("{"):resp.rfind("}") + 1]
-                plan = json.loads(resp)
-            except Exception:
-                print(f"{C_RED}[MANUAL] JSON invalido do LLM.{C_RESET}")
-                return False
+            resp = self.ask_llm_robust(prompt, expect_json=True)
+            plan = None
+            if resp:
+                try:
+                    plan = json.loads(resp)
+                except Exception:
+                    plan = None
+            if plan is None:
+                # Rodada ruim (sem JSON valido apos retries): NAO mata o TIER C;
+                # registra e segue p/ a proxima rodada com um lembrete corretivo.
+                print(f"{C_RED}[MANUAL] Sem JSON valido do LLM (rodada {rnd}/{max_rounds}); seguindo.{C_RESET}")
+                history.append(("(no valid command this round)", "Your previous "
+                    "reply was not valid JSON. Reply with ONLY the JSON object."))
+                continue
             check = (plan.get("success_check") or "").strip()
             print(f"{C_BLUE}[MANUAL] {plan.get('reason', '(sem motivo)')}{C_RESET}")
             cmds = plan.get("commands") or []

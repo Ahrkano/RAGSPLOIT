@@ -138,17 +138,36 @@ class PipelineBase:
         except Exception as e:
             print(f"[RAG] Falha ao gravar experiencia: {e}")
 
-    def ask_llm_robust(self, prompt, max_retries=4):
+    def ask_llm_robust(self, prompt, max_retries=4, expect_json=False):
         """Consulta o modelo com backoff. Retorna None se o modelo nao
         responder (ex.: 503/429 persistente) — o chamador decide o que fazer,
-        SEM recorrer a decisao hardcoded."""
+        SEM recorrer a decisao hardcoded.
+
+        Com expect_json=True, exige que a resposta parseie como UM objeto JSON:
+        se vier JSON invalido, RE-PEDE imediatamente (sem backoff) acrescentando
+        um lembrete corretivo; devolve so o objeto {...} ja extraido, ou None se
+        nao obtiver JSON valido dentro de max_retries. Isso evita que um unico
+        turno malformado de um modelo pequeno derrube o chamador (ex.: TIER C)."""
+        import json as _json
         for attempt in range(max_retries):
+            nudge = "" if attempt == 0 else (
+                "\n\nIMPORTANT: your previous reply was NOT valid JSON. Reply with "
+                "ONLY one JSON object (no prose, no markdown, no backticks). Do NOT "
+                "escape characters that JSON does not require: a single quote ' is "
+                "literal — never write \\x27, \\u0027 or \\'.")
             try:
-                resp = (self.llm.ask(prompt, history=[]) or "").replace("```json", "").replace("```", "").strip()
-                if resp and resp != "{}":
-                    return resp
+                resp = (self.llm.ask(prompt + nudge, history=[]) or "").replace("```json", "").replace("```", "").strip()
             except Exception:
-                pass
-            # Backoff crescente: 503/429 de provedores sao tipicamente transitorios.
+                resp = ""
+            if resp and resp != "{}":
+                if not expect_json:
+                    return resp
+                cand = resp[resp.find("{"):resp.rfind("}") + 1] if "{" in resp else resp
+                try:
+                    _json.loads(cand)
+                    return cand          # JSON valido: devolve o objeto ja extraido
+                except Exception:
+                    continue             # JSON ruim: re-pede JA, com nudge (sem backoff)
+            # Vazio/erro: provavelmente 503/429 transitorio -> backoff crescente.
             time.sleep(min(30, (attempt + 1) * 5))
         return None
