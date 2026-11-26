@@ -100,7 +100,7 @@ class MetasploitClient:
             return list(sessions.keys())[0]
         return None
 
-    def run_module(self, module_type, module_name, options):
+    def run_module(self, module_type, module_name, options, timeout=20):
         if not self.verify_module_exists(module_type, module_name):
             print(f"[MSF] ALERTA: Modulo {module_name} nao encontrado.")
             return None
@@ -123,7 +123,7 @@ class MetasploitClient:
         ]
         full_cmd = "\n".join(cmds)
         print(f"[MSF] Executando: {module_type}/{module_name}")
-        return self.execute_command(full_cmd, timeout=20)
+        return self.execute_command(full_cmd, timeout=timeout)
 
     def run_login_scanner(self, module_name, base_opts, userpass_file=None,
                           user_file=None, pass_file=None, timeout=240):

@@ -117,7 +117,7 @@ class LLMMetrics:
         }
 
     def write_run_record(self, status=None, target=None, rag_enabled=None,
-                         attacker=None):
+                         attacker=None, kb_snapshot=None):
         """Grava um registro por-run (runstats_<stamp>.json) com um marcador de
         schema, unindo a telemetria do LLM ao resultado do ataque. So os runs
         com este schema entram nas estatisticas de pesquisa (por provedor)."""
@@ -134,6 +134,7 @@ class LLMMetrics:
             "status": status,                       # "PWNED" | "FALHA"
             "pwned": (str(status).upper() == "PWNED"),
             "rag_enabled": bool(rag_enabled) if rag_enabled is not None else None,
+            "kb_snapshot": kb_snapshot,            # item 8: versao do KB usada na run
             "timestamp": datetime.datetime.now().isoformat(timespec="seconds"),
             "metrics": s,
             "latencies": lat,

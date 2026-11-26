@@ -123,6 +123,39 @@ class RagEngine:
         except Exception:
             return -1
 
+    def snapshot(self):
+        """Impressao digital do KB usado nesta run (item 8: reprodutibilidade).
+
+        Retorna modelo de embedding, colecao, contagem de vetores e um hash do
+        conteudo dos arquivos-fonte de ingestao (config/ingest/*). Gravado no
+        relatorio e no run-record para que um resultado possa ser amarrado ao
+        snapshot exato do conhecimento que o produziu."""
+        import hashlib
+        snap = {
+            "embedding_model": getattr(settings, "EMBEDDING_MODEL", "?"),
+            "collection": "security_knowledge",
+            "vector_count": self.count(),
+            "sources_sha256": None,
+            "sources_files": 0,
+        }
+        try:
+            ingest_dir = getattr(settings, "DATA_PATH", "")
+            h = hashlib.sha256()
+            files = []
+            if ingest_dir and os.path.isdir(ingest_dir):
+                for name in sorted(os.listdir(ingest_dir)):
+                    fp = os.path.join(ingest_dir, name)
+                    if os.path.isfile(fp):
+                        files.append(name)
+                        h.update(name.encode("utf-8", "ignore"))
+                        with open(fp, "rb") as f:
+                            h.update(f.read())
+            snap["sources_files"] = len(files)
+            snap["sources_sha256"] = h.hexdigest()[:16] if files else None
+        except Exception:
+            pass
+        return snap
+
     def ingest_experience(self, record):
         """Grava no RAG os parametros/resultado de um ataque (feedback loop #2)."""
         lines = ["=== ATTACK EXPERIENCE CARD ==="]

