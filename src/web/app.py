@@ -56,6 +56,7 @@ from src import cve_scheduler                   # noqa: E402
 from src import cve_sources                      # noqa: E402
 from src import wordlists                         # noqa: E402
 from src import health_checks                     # noqa: E402
+from src import scenarios                           # noqa: E402
 
 LOGS_DIR = "/app/data/logs"
 RAG_ADMIN = os.path.join(SRC, "rag_admin.py")
@@ -285,6 +286,17 @@ def reports_page():
 @app.route("/knowledge")
 def knowledge_page():
     return render_template("knowledge.html", st=current_state())
+
+
+@app.route("/usecases")
+def usecases_page():
+    return render_template("usecases.html", st=current_state(),
+                           grouped=scenarios.grouped(), ws_token=WS_TOKEN)
+
+
+@app.route("/api/ablation/results")
+def api_ablation_results():
+    return jsonify({"results": scenarios.list_ablation_results()}), 200
 
 
 @app.route("/checklist")
@@ -769,44 +781,10 @@ def api_llm_metrics():
 
 
 # --- WebSocket: PTY do pipeline ---
-@sock.route("/ws/run")
-def ws_run(ws):
-    # Valida token efemero (as paginas autenticadas o injetam).
-    if not hmac.compare_digest(request.args.get("token", ""), WS_TOKEN):
-        ws.send("\r\n[ERRO] token invalido. Recarregue a pagina autenticada.\r\n")
-        return
-
-    init = ws.receive()
-    try:
-        cfg = json.loads(init) if init else {}
-    except Exception:
-        cfg = {}
-
-    pipeline = cfg.get("pipeline", "pipe_v4.py")
-    if pipeline not in ALLOWED_PIPELINES:
-        ws.send(f"\r\n[ERRO] pipeline nao permitido: {pipeline}\r\n")
-        return
-
-    target = resolve_target((cfg.get("target") or "").strip() or None)
-    extra = []
-    if cfg.get("disable_rag"):
-        extra.append("--disable-rag")
-    if cfg.get("no_brute"):
-        extra.append("--no-brute")
-    # Porta opcional: vazio => recon completo (todas as portas); numero valido
-    # => restringe o ataque aquela porta. Validado como inteiro 1-65535 (argv e
-    # lista, sem shell, mas validamos para nao passar lixo ao pipeline).
-    port = cfg.get("port")
-    if port not in (None, "", False):
-        try:
-            pnum = int(port)
-            if 1 <= pnum <= 65535:
-                extra += ["--port", str(pnum)]
-        except (TypeError, ValueError):
-            pass
-
-    argv = [sys.executable, os.path.join(SRC, pipeline), "--target", target] + extra
-
+def _pty_ws_loop(ws, argv, banner):
+    """Roda `argv` num PTY e faz a ponte bidirecional com o WebSocket (saida ao
+    vivo + teclado/resize). Loop em UNICO thread (simple_websocket nao suporta
+    send/receive concorrentes). Compartilhado por /ws/run e /ws/usecase."""
     master, slave = pty.openpty()
     try:
         proc = subprocess.Popen(
@@ -821,16 +799,7 @@ def ws_run(ws):
         return
     os.close(slave)
 
-    ws.send(f"\r\n\033[92m>>> RAGSPLOIT :: {pipeline} --target {target} "
-            f"{' '.join(extra)}\033[0m\r\n")
-
-    # IMPORTANTE: todas as operacoes do WebSocket (send E receive) ficam neste
-    # UNICO thread. simple_websocket nao suporta acesso concorrente ao mesmo
-    # socket por dois threads — a versao anterior lia o PTY num thread separado
-    # que chamava ws.send() enquanto este thread chamava ws.receive(), o que
-    # corrompia a maquina de estados e derrubava a conexao (ConnectionClosed
-    # 1000) logo apos o banner. Aqui um unico loop drena o PTY (select nao
-    # bloqueante) e le a entrada do cliente (receive com timeout curto).
+    ws.send(banner)
     try:
         while True:
             # 1) Saida do pipeline (PTY) -> cliente, priorizando esvaziar o PTY.
@@ -881,6 +850,76 @@ def ws_run(ws):
             ws.send("\r\n\033[93m>>> Sessao encerrada.\033[0m\r\n")
         except Exception:
             pass
+
+
+@sock.route("/ws/run")
+def ws_run(ws):
+    # Valida token efemero (as paginas autenticadas o injetam).
+    if not hmac.compare_digest(request.args.get("token", ""), WS_TOKEN):
+        ws.send("\r\n[ERRO] token invalido. Recarregue a pagina autenticada.\r\n")
+        return
+
+    init = ws.receive()
+    try:
+        cfg = json.loads(init) if init else {}
+    except Exception:
+        cfg = {}
+
+    pipeline = cfg.get("pipeline", "pipe_v4.py")
+    if pipeline not in ALLOWED_PIPELINES:
+        ws.send(f"\r\n[ERRO] pipeline nao permitido: {pipeline}\r\n")
+        return
+
+    target = resolve_target((cfg.get("target") or "").strip() or None)
+    extra = []
+    if cfg.get("disable_rag"):
+        extra.append("--disable-rag")
+    if cfg.get("no_brute"):
+        extra.append("--no-brute")
+    # Porta opcional: vazio => recon completo (todas as portas); numero valido
+    # => restringe o ataque aquela porta. Validado como inteiro 1-65535 (argv e
+    # lista, sem shell, mas validamos para nao passar lixo ao pipeline).
+    port = cfg.get("port")
+    if port not in (None, "", False):
+        try:
+            pnum = int(port)
+            if 1 <= pnum <= 65535:
+                extra += ["--port", str(pnum)]
+        except (TypeError, ValueError):
+            pass
+
+    argv = [sys.executable, os.path.join(SRC, pipeline), "--target", target] + extra
+    banner = (f"\r\n\033[92m>>> RAGSPLOIT :: {pipeline} --target {target} "
+              f"{' '.join(extra)}\033[0m\r\n")
+    _pty_ws_loop(ws, argv, banner)
+
+
+@sock.route("/ws/usecase")
+def ws_usecase(ws):
+    """Executa um CASO DE USO (cenario) via PTY, com argv montado e VALIDADO pelo
+    registro em scenarios.py (allowlist de scripts + validacao de params)."""
+    if not hmac.compare_digest(request.args.get("token", ""), WS_TOKEN):
+        ws.send("\r\n[ERRO] token invalido. Recarregue a pagina autenticada.\r\n")
+        return
+    init = ws.receive()
+    try:
+        cfg = json.loads(init) if init else {}
+    except Exception:
+        cfg = {}
+    sid = cfg.get("scenario")
+    params = cfg.get("params") or {}
+    try:
+        cmd = scenarios.build_command(sid, params)
+    except scenarios.ScenarioError as e:
+        ws.send(f"\r\n[ERRO] {e}\r\n")
+        return
+    except Exception as e:
+        ws.send(f"\r\n[ERRO] cenario invalido: {e}\r\n")
+        return
+    argv = [sys.executable, os.path.join(SRC, cmd["script_file"])] + cmd["argv"]
+    banner = (f"\r\n\033[92m>>> CASO DE USO :: {cmd['label']}\033[0m\r\n"
+              f"\033[90m{cmd['script_file']} {' '.join(cmd['argv'])}\033[0m\r\n")
+    _pty_ws_loop(ws, argv, banner)
 
 
 if __name__ == "__main__":

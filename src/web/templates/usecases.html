@@ -1,0 +1,200 @@
+{% extends "base.html" %}
+{% set nav = 'usecases' %}
+{% block title %}Casos de uso{% endblock %}
+{% block head %}
+<link rel="stylesheet" href="/static/vendor/xterm.css">
+<link rel="stylesheet" href="/static/monitor.css">
+<script src="/static/vendor/xterm.js"></script>
+<script src="/static/vendor/xterm-addon-fit.js"></script>
+<script src="/static/monitor.js"></script>
+<style>
+  #term{width:100%;height:52vh;min-height:320px;background:#000;border:1px solid var(--border);
+        border-radius:8px;padding:8px}
+  .term-wrap{margin-top:14px}
+  .dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--muted)}
+  .dot.on{background:var(--green)} .dot.off{background:var(--red)}
+  .uc-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px}
+  .uc-card{border:1px solid var(--border);border-radius:10px;padding:14px 16px;background:var(--panel2);
+           display:flex;flex-direction:column;gap:10px}
+  .uc-card h3{margin:0;color:var(--green);font-size:15px}
+  .uc-card .ds{color:var(--muted);font-size:12px;margin:0}
+  .uc-fields{display:flex;flex-direction:column;gap:8px}
+  .uc-f{display:flex;flex-direction:column;gap:3px}
+  .uc-f.cb{flex-direction:row;align-items:center;gap:8px}
+  .uc-f label{color:var(--muted);font-size:11px;margin:0}
+  .uc-f input[type=text],.uc-f input[type=number],.uc-f select{width:100%;background:#0a0a0a;
+      color:var(--fg);border:1px solid var(--border);border-radius:6px;padding:7px 9px;font:inherit}
+  .uc-f input:focus,.uc-f select:focus{outline:none;border-color:var(--green)}
+  .uc-f.cb input{width:15px;height:15px;accent-color:var(--green)}
+  .uc-go{align-self:flex-start}
+  .gsec{margin-top:8px}
+  .gsec .glabel{color:var(--purple);font-size:12px;text-transform:uppercase;letter-spacing:1px;
+                font-weight:bold;margin:0 0 10px}
+  .uc-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:12px}
+  .uc-actions .spacer{flex:1 1 auto}
+  .abl-card{border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:10px;background:#0a0a0a}
+  .abl-card h4{margin:0 0 6px;font-size:13px;color:var(--cyan)}
+  .abl-card table{font-size:12px}
+  .abl-card td,.abl-card th{padding:5px 8px}
+  .v-ok{color:var(--green)} .v-no{color:var(--red)}
+</style>
+{% endblock %}
+{% block body %}
+<h1>Casos de uso — Experimentos</h1>
+<p class="hint">Rotinas prontas para validar a pesquisa. Ajuste a config rápida e clique
+<b>Executar</b>: a saída roda no terminal abaixo com o painel ao vivo. Os casos de ataque
+usam o mesmo motor (engine) compartilhado; a <b>Ablação</b> roda o benchmark e gera CSVs
+(resultados ao final da página).</p>
+
+{% for group, scens in grouped %}
+<div class="gsec">
+  <div class="glabel">{{ group }}</div>
+  <div class="uc-grid">
+    {% for sc in scens %}
+    <div class="uc-card" data-id="{{ sc.id }}" data-kind="{{ sc.kind }}">
+      <h3>{{ sc.name }}</h3>
+      <p class="ds">{{ sc.description }}</p>
+      <div class="uc-fields">
+        {% for f in sc.fields %}
+          {% if f.type == 'checkbox' %}
+          <div class="uc-f cb">
+            <input type="checkbox" id="f-{{ sc.id }}-{{ f.name }}" {% if f.default %}checked{% endif %}>
+            <label for="f-{{ sc.id }}-{{ f.name }}">{{ f.label }}</label>
+          </div>
+          {% elif f.type == 'select' %}
+          <div class="uc-f">
+            <label for="f-{{ sc.id }}-{{ f.name }}">{{ f.label }}</label>
+            <select id="f-{{ sc.id }}-{{ f.name }}">
+              {% for o in f.options %}
+              <option value="{{ o.value }}" {% if o.value == f.default %}selected{% endif %}>{{ o.label }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          {% else %}
+          <div class="uc-f">
+            <label for="f-{{ sc.id }}-{{ f.name }}">{{ f.label }}</label>
+            <input type="{{ f.type }}" id="f-{{ sc.id }}-{{ f.name }}"
+                   value="{{ f.default }}" placeholder="{{ f.placeholder or '' }}">
+          </div>
+          {% endif %}
+        {% endfor %}
+      </div>
+      <button type="button" class="uc-go" data-id="{{ sc.id }}" data-kind="{{ sc.kind }}">▶ Executar</button>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endfor %}
+
+<div class="panel">
+  <div class="uc-actions">
+    <b id="runningLabel" class="hint">nenhum caso em execução</b>
+    <span class="spacer"></span>
+    <span class="dot off" id="dot"></span>
+    <button type="button" id="btnStop" class="danger" disabled>■ Parar</button>
+  </div>
+
+  {% include "_monitor.html" %}
+
+  <div class="term-wrap"><div id="term"></div></div>
+</div>
+
+<div class="panel">
+  <div class="uc-actions" style="margin-top:0">
+    <b style="color:var(--purple)">Resultados da Ablação (CSV)</b>
+    <span class="spacer"></span>
+    <button type="button" class="ghost" id="reloadAbl">Atualizar</button>
+  </div>
+  <div id="ablResults"><span class="hint">carregando…</span></div>
+</div>
+
+<script>
+const WS_TOKEN = {{ ws_token|tojson }};
+const SCENARIOS = {{ grouped|tojson }};  {# [[group,[scen...]],...] #}
+const term = new Terminal({cursorBlink:true, fontSize:13, theme:{background:"#000000"},
+                           convertEol:false, scrollback:6000});
+const fit = new FitAddon.FitAddon();
+term.loadAddon(fit); term.open(document.getElementById("term")); fit.fit();
+let ws=null, curKind=null;
+const dot=document.getElementById("dot");
+function setRunning(on, label){
+  dot.className="dot "+(on?"on":"off");
+  document.getElementById("btnStop").disabled=!on;
+  document.getElementById("runningLabel").textContent = on ? ("executando: "+label) : "nenhum caso em execução";
+  document.querySelectorAll(".uc-go").forEach(b=>b.disabled=on);
+}
+
+function fieldsOf(sid){
+  for(const [,scens] of SCENARIOS) for(const s of scens) if(s.id===sid) return s.fields;
+  return [];
+}
+function collectParams(sid){
+  const p={};
+  for(const f of fieldsOf(sid)){
+    const el=document.getElementById("f-"+sid+"-"+f.name);
+    if(!el) continue;
+    p[f.name] = (f.type==="checkbox") ? el.checked : el.value.trim();
+  }
+  return p;
+}
+
+function run(sid, kind){
+  if(ws) return;
+  curKind=kind;
+  RSMonitor.reset();
+  const proto = location.protocol==="https:" ? "wss":"ws";
+  ws = new WebSocket(`${proto}://${location.host}/ws/usecase?token=${encodeURIComponent(WS_TOKEN)}`);
+  ws.onopen = ()=>{
+    setRunning(true, sid);
+    ws.send(JSON.stringify({scenario: sid, params: collectParams(sid)}));
+    if(ws && ws.readyState===1) ws.send(JSON.stringify({resize:{cols:term.cols,rows:term.rows}}));
+  };
+  ws.onmessage = ev => { term.write(ev.data); try{ RSMonitor.feed(ev.data); }catch(e){} };
+  ws.onclose = ()=>{ setRunning(false); RSMonitor.stop(); const wasAbl=(curKind==="ablation"); ws=null; curKind=null;
+                     if(wasAbl) setTimeout(loadAblation, 600); };
+  ws.onerror = ()=>{ term.write("\r\n[ws] erro de conexao\r\n"); };
+}
+function stop(){ if(ws) ws.close(); }
+
+document.querySelectorAll(".uc-go").forEach(btn=>{
+  btn.addEventListener("click", ()=>run(btn.dataset.id, btn.dataset.kind));
+});
+document.getElementById("btnStop").addEventListener("click", stop);
+term.onData(d => { if(ws && ws.readyState===1) ws.send(d); });
+window.addEventListener("resize", ()=>{ fit.fit();
+  if(ws && ws.readyState===1) ws.send(JSON.stringify({resize:{cols:term.cols,rows:term.rows}})); });
+
+// --- Resultados da ablacao ---
+function cell(v){
+  const s=String(v);
+  if(/^(true|1|sim)$/i.test(s)) return '<span class="v-ok">✔ '+s+'</span>';
+  if(/^(false|0|nao|não)$/i.test(s)) return '<span class="v-no">✘ '+s+'</span>';
+  return s;
+}
+async function loadAblation(){
+  const box=document.getElementById("ablResults");
+  box.innerHTML='<span class="hint">carregando…</span>';
+  try{
+    const r=await fetch("/api/ablation/results");
+    if(r.status===401){ box.innerHTML='<span class="hint">sessão expirada; recarregue.</span>'; return; }
+    const {results}=await r.json();
+    if(!results || !results.length){ box.innerHTML='<span class="hint">nenhum CSV de ablação ainda. Rode o caso 2b.</span>'; return; }
+    box.innerHTML="";
+    for(const res of results){
+      const div=document.createElement("div"); div.className="abl-card";
+      const dt = res.mtime ? new Date(res.mtime*1000).toLocaleString() : "";
+      let html=`<h4>${res.arm} — ${res.file} <span class="hint">${dt}</span></h4>`;
+      if(res.rows && res.rows.length){
+        html+="<table><thead><tr>"+res.columns.map(c=>`<th>${c}</th>`).join("")+"</tr></thead><tbody>";
+        for(const row of res.rows)
+          html+="<tr>"+res.columns.map(c=>`<td>${cell(row[c]??"")}</td>`).join("")+"</tr>";
+        html+="</tbody></table>";
+      } else html+='<span class="hint">(sem linhas)</span>';
+      div.innerHTML=html; box.appendChild(div);
+    }
+  }catch(e){ box.innerHTML='<span class="hint">erro ao carregar resultados: '+e+'</span>'; }
+}
+document.getElementById("reloadAbl").addEventListener("click", loadAblation);
+loadAblation();
+</script>
+{% endblock %}

@@ -1,0 +1,33 @@
+{# Markup compartilhado do monitor ao vivo (incluido por run.html e usecases.html).
+   O JS que o alimenta e /static/monitor.js (RSMonitor). #}
+<div class="monitor" id="monitor">
+  <div class="stats">
+    <div class="stat"><div class="k">Tempo decorrido</div><div class="v" id="mTime">00:00</div></div>
+    <div class="stat" id="mIdleBox"><div class="k">Desde a última saída</div><div class="v" id="mIdle">—</div></div>
+    <div class="stat"><div class="k">Requisições LLM</div><div class="v" id="mLLM">0</div></div>
+    <div class="stat"><div class="k">CVEs sugeridos</div><div class="v" id="mCve">0</div></div>
+    <div class="stat"><div class="k">Credenciais</div><div class="v" id="mCred">0</div></div>
+    <div class="stat"><div class="k">Fase atual</div><div class="v" id="mPhase" style="font-size:13px">—</div></div>
+  </div>
+
+  <div class="mon-sec">
+    <div class="glabel">Fases</div>
+    <div class="phases" id="phases">
+      <div class="ph" data-ph="1"><span class="n">1</span><span>Recon</span></div>
+      <div class="ph" data-ph="2"><span class="n">2</span><span>Análise (RAG+LLM)</span></div>
+      <div class="ph" data-ph="3"><span class="n">3</span><span>Exploração</span></div>
+      <div class="ph" data-ph="4"><span class="n">4</span><span>Pós-exploração</span></div>
+      <div class="ph" data-ph="5"><span class="n">5</span><span>Privesc</span></div>
+    </div>
+  </div>
+
+  <div class="mon-sec">
+    <div class="glabel">Portas abertas <span class="hint" id="portHint">— a porta em teste fica destacada</span></div>
+    <div class="chips" id="ports"><span class="hint">aguardando recon…</span></div>
+  </div>
+
+  <div class="mon-sec">
+    <div class="glabel">CVEs sugeridos pelo modelo</div>
+    <div class="chips" id="cves"><span class="hint">nenhum ainda</span></div>
+  </div>
+</div>
