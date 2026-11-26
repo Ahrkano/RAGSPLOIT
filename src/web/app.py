@@ -419,6 +419,26 @@ def api_models():
     return jsonify({"provider": provider, "models": models}), 200
 
 
+@app.route("/api/models/all")
+def api_models_all():
+    """Modelos disponiveis em TODAS as APIs com chave (ids ja COM prefixo de
+    provedor). Usado pela ablacao (UC2b) para escolher ate 10 modelos mistos."""
+    ms.load_dot_env()
+    out = []
+    missing = []
+    for provider, meta in ms.PROVIDERS.items():
+        key = ms.get_provider_key(provider)
+        if not key:
+            missing.append(provider)
+            continue
+        try:
+            for name in (ms.FETCHERS[provider](key) or []):
+                out.append({"id": meta["prefix"] + name, "provider": provider, "name": name})
+        except Exception:
+            missing.append(provider)
+    return jsonify({"models": out, "missing_key": missing}), 200
+
+
 @app.route("/api/config", methods=["POST"])
 def api_config():
     data = request.get_json(silent=True) or {}

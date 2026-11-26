@@ -53,9 +53,12 @@ SCENARIOS = [
     {
         "id": "ablation", "name": "2b · Ablação (10 modelos, ZS × RAG)", "group": "Alvo único",
         "kind": "ablation", "script": "benchmark",
-        "description": "Benchmark Samba CVE-2007-2447 nos 10 modelos, comparando "
-                       "Zero-Shot vs RAG. Gera um CSV por braço (veja os resultados abaixo).",
+        "description": "Benchmark Samba CVE-2007-2447 comparando Zero-Shot vs RAG. "
+                       "Selecione até 10 modelos de qualquer API (vazio = lista Google "
+                       "padrão). Gera um CSV por braço (veja os resultados abaixo).",
         "fields": [
+            {"name": "models", "label": "Modelos (até 10, de qualquer API)",
+             "type": "models", "default": []},
             {"name": "arm", "label": "Braço", "type": "select", "default": "rag",
              "options": [{"value": "rag", "label": "Com RAG"},
                          {"value": "zs", "label": "Zero-Shot (sem RAG)"}]},
@@ -120,6 +123,13 @@ def _cidr_ok(v):
         return False
 
 
+_MODEL_ID_RE = re.compile(r"^(gemini|openai|anthropic)/[A-Za-z0-9][A-Za-z0-9._:\-]*$")
+
+
+def _model_id_ok(v):
+    return bool(_MODEL_ID_RE.match(str(v or "")))
+
+
 class ScenarioError(ValueError):
     pass
 
@@ -176,7 +186,19 @@ def build_command(scenario_id, params):
         if arm not in ("rag", "zs"):
             raise ScenarioError(f"braço inválido: {arm}")
         argv.append("--rag_enable" if arm == "rag" else "--rag_disable")
-        label = f"{sc['name']} → {'Com RAG' if arm == 'rag' else 'Zero-Shot'}"
+        models = p.get("models") or []
+        if isinstance(models, str):
+            models = [m.strip() for m in models.split(",") if m.strip()]
+        models = [m for m in models if m]
+        if models:
+            if len(models) > 10:
+                raise ScenarioError(f"selecione no máximo 10 modelos (você escolheu {len(models)})")
+            bad = [m for m in models if not _model_id_ok(m)]
+            if bad:
+                raise ScenarioError("modelo(s) com id inválido: " + ", ".join(bad[:3]))
+            argv += ["--models", ",".join(models)]
+        label = (f"{sc['name']} → {'Com RAG' if arm == 'rag' else 'Zero-Shot'}"
+                 + (f" · {len(models)} modelos" if models else " · lista padrão"))
     else:
         raise ScenarioError("script não suportado")
 

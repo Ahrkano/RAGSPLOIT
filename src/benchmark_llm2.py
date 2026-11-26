@@ -39,23 +39,50 @@ MODELS_TO_TEST = [
     "gemini-3-flash-preview"
 ]
 
-def update_ai_settings(model_name):
+# Prefixo do id do modelo -> provedor (igual ao model_selector.PROVIDERS).
+PREFIX_TO_PROVIDER = {"gemini/": "google", "openai/": "openai", "anthropic/": "anthropic"}
+
+
+def _qualify(model_id):
+    """Garante o id COM prefixo de provedor. Sem prefixo conhecido -> assume
+    google (compatibilidade com a lista antiga, que era so de modelos Google)."""
+    mid = str(model_id).strip()
+    if any(mid.startswith(p) for p in PREFIX_TO_PROVIDER):
+        return mid
+    return "gemini/" + mid
+
+
+def update_ai_settings(model_id):
+    """Grava provider + model em ai_settings.json. O provider e DERIVADO do
+    prefixo do id (gemini/ openai/ anthropic/), permitindo misturar modelos de
+    varias APIs no mesmo benchmark."""
+    mid = _qualify(model_id)
+    provider = next((prov for pref, prov in PREFIX_TO_PROVIDER.items()
+                     if mid.startswith(pref)), "google")
     config = {}
     try:
-        with open(CONFIG_FILE) as _cf: config = json.load(_cf)
-    except Exception: pass
-    config.setdefault("provider", "google")
-    config["model"] = f"gemini/{model_name}"
+        with open(CONFIG_FILE) as _cf:
+            config = json.load(_cf)
+    except Exception:
+        pass
+    config["provider"] = provider
+    config["model"] = mid
     config.setdefault("temperature", 0.1)
     config.setdefault("max_tokens", 2000)
     os.makedirs(os.path.dirname(CONFIG_FILE), exist_ok=True)
     with open(CONFIG_FILE, 'w') as f:
         json.dump(config, f, indent=4)
 
-def run_benchmark(enable_rag):
+
+def run_benchmark(enable_rag, models=None):
     modo_str = "COM RAG ATIVADO" if enable_rag else "SEM RAG (ZERO-SHOT)"
     print(f"=== INICIANDO BENCHMARK V2 - CENARIO SAMBA ({modo_str}) ===")
-    
+
+    # Lista de modelos (ids COM prefixo de provedor). Default = lista Google
+    # historica; a UI/CLI pode passar ate 10 modelos de qualquer API.
+    models_list = [_qualify(m) for m in (models or MODELS_TO_TEST)][:10]
+    print(f"[*] Modelos avaliados ({len(models_list)}): {', '.join(models_list)}")
+
     msf = MetasploitClient(password="msfpass", server="192.168.70.20")
     results = []
 
@@ -77,7 +104,7 @@ def run_benchmark(enable_rag):
         rag_context = "NO EXTERNAL INTELLIGENCE PROVIDED. RELY ENTIRELY ON YOUR INTERNAL PRE-TRAINED KNOWLEDGE."
 
     # Loop com enumerate para gerar LPORT dinamico
-    for idx, model in enumerate(MODELS_TO_TEST):
+    for idx, model in enumerate(models_list):
         print(f"\n[*] {'='*50}")
         print(f"[*] Avaliando modelo: {model}...")
         
@@ -218,6 +245,10 @@ if __name__ == "__main__":
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--rag_enable", action="store_true", help="Executa o benchmark ancorado pelo RAG")
     group.add_argument("--rag_disable", action="store_true", help="Executa o benchmark sem auxilio (Zero-Shot)")
-    
+    parser.add_argument("--models", type=str, default=None,
+                        help="Lista de ate 10 modelos (ids com prefixo de provedor, "
+                             "separados por virgula): ex. gemini/gemini-2.5-flash,openai/gpt-4o-mini,"
+                             "anthropic/claude-3-5-haiku. Vazio = lista Google padrao.")
     args = parser.parse_args()
-    run_benchmark(enable_rag=args.rag_enable)
+    models = [m.strip() for m in args.models.split(",") if m.strip()] if args.models else None
+    run_benchmark(enable_rag=args.rag_enable, models=models)

@@ -37,6 +37,13 @@
   .abl-card table{font-size:12px}
   .abl-card td,.abl-card th{padding:5px 8px}
   .v-ok{color:var(--green)} .v-no{color:var(--red)}
+  .model-pick{border:1px solid var(--border);border-radius:6px;background:#0a0a0a;
+              max-height:200px;overflow:auto;padding:6px 8px;display:flex;flex-direction:column;gap:2px}
+  .model-pick .prov{color:var(--purple);font-size:10px;text-transform:uppercase;
+                    letter-spacing:.5px;margin:6px 0 2px}
+  .model-pick label{display:flex;align-items:center;gap:7px;color:var(--fg);font-size:12px;
+                    cursor:pointer;margin:0;padding:1px 0}
+  .model-pick input{width:14px;height:14px;accent-color:var(--green);flex:0 0 auto}
 </style>
 {% endblock %}
 {% block body %}
@@ -60,6 +67,13 @@ usam o mesmo motor (engine) compartilhado; a <b>Ablação</b> roda o benchmark e
           <div class="uc-f cb">
             <input type="checkbox" id="f-{{ sc.id }}-{{ f.name }}" {% if f.default %}checked{% endif %}>
             <label for="f-{{ sc.id }}-{{ f.name }}">{{ f.label }}</label>
+          </div>
+          {% elif f.type == 'models' %}
+          <div class="uc-f">
+            <label>{{ f.label }} <span class="hint" id="mcount-{{ sc.id }}-{{ f.name }}">(0 selecionados)</span></label>
+            <div class="model-pick" id="f-{{ sc.id }}-{{ f.name }}" data-models="1" data-max="10">
+              <span class="hint">carregando modelos…</span>
+            </div>
           </div>
           {% elif f.type == 'select' %}
           <div class="uc-f">
@@ -145,10 +159,53 @@ function collectParams(sid){
   for(const f of fieldsOf(sid)){
     const el=document.getElementById("f-"+sid+"-"+f.name);
     if(!el) continue;
-    p[f.name] = (f.type==="checkbox") ? el.checked : el.value.trim();
+    if(f.type==="models") p[f.name]=[...el.querySelectorAll("input:checked")].map(x=>x.value);
+    else if(f.type==="checkbox") p[f.name]=el.checked;
+    else p[f.name]=el.value.trim();
   }
   return p;
 }
+
+async function loadModels(){
+  const boxes=document.querySelectorAll(".model-pick[data-models]");
+  if(!boxes.length) return;
+  let data;
+  try{ const r=await fetch("/api/models/all"); data=await r.json(); }
+  catch(e){ boxes.forEach(b=>b.innerHTML='<span class="hint">erro ao carregar modelos</span>'); return; }
+  const models=data.models||[];
+  boxes.forEach(box=>{
+    if(!models.length){
+      box.innerHTML='<span class="hint">nenhum modelo disponível — configure chaves de API em Config'
+        +(data.missing_key&&data.missing_key.length?(' (sem chave: '+data.missing_key.join(", ")+')'):'')
+        +'. Vazio = lista Google padrão.</span>';
+      return;
+    }
+    const byProv={};
+    models.forEach(m=>{ (byProv[m.provider]=byProv[m.provider]||[]).push(m); });
+    box.innerHTML="";
+    Object.keys(byProv).forEach(prov=>{
+      const h=document.createElement("div"); h.className="prov"; h.textContent=prov+" ("+byProv[prov].length+")";
+      box.appendChild(h);
+      byProv[prov].forEach(m=>{
+        const lab=document.createElement("label");
+        const cb=document.createElement("input"); cb.type="checkbox"; cb.value=m.id;
+        lab.appendChild(cb); lab.appendChild(document.createTextNode(" "+m.name));
+        box.appendChild(lab);
+      });
+    });
+    const max=+box.dataset.max||10;
+    const counter=document.getElementById("mcount-"+box.id.replace(/^f-/,""));
+    function upd(){
+      const checked=box.querySelectorAll("input:checked");
+      if(counter) counter.textContent="("+checked.length+"/"+max+" selecionados)";
+      const atMax=checked.length>=max;
+      box.querySelectorAll("input:not(:checked)").forEach(i=>i.disabled=atMax);
+    }
+    box.querySelectorAll("input").forEach(i=>i.addEventListener("change",upd));
+    upd();
+  });
+}
+loadModels();
 
 function run(sid, kind){
   if(ws) return;
