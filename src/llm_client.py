@@ -50,10 +50,14 @@ class LLMClient:
         messages.append(HumanMessage(content=prompt))
 
         prompt_chars = sum(len(getattr(m, "content", "") or "") for m in messages)
+        # Marcador conciso p/ o usuario (terminal) e p/ a UI contar requisicoes:
+        # a espera pela resposta do modelo e o que mais parece "travado".
+        print(f"[LLM] -> consultando {self.model_name} ...", flush=True)
         t0 = time.time()
         try:
             response = self.chat.invoke(messages)
             latency = time.time() - t0
+            print(f"[LLM] <- resposta em {latency:.1f}s", flush=True)
             content = response.content.strip()
             if "```json" in content:
                 content = content.split("```json")[1].split("```")[0].strip()

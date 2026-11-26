@@ -35,6 +35,35 @@
   .actions .spacer{flex:1 1 auto}
   .status{display:flex;align-items:center;gap:8px}
   @media(max-width:680px){.grid3{grid-template-columns:1fr}.opts{grid-template-columns:1fr}}
+
+  /* ---- painel de acompanhamento ao vivo ---- */
+  .monitor{margin-top:16px;display:flex;flex-direction:column;gap:16px}
+  .mon-sec .glabel{margin-bottom:8px}
+  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px}
+  .stat{background:#0a0a0a;border:1px solid var(--border);border-radius:8px;padding:10px 12px}
+  .stat .k{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.5px}
+  .stat .v{color:var(--green);font-size:20px;margin-top:3px;font-variant-numeric:tabular-nums;
+           word-break:break-word}
+  .stat.warn .v{color:var(--yellow)} .stat.bad .v{color:var(--red)}
+  .phases{display:flex;gap:8px;flex-wrap:wrap}
+  .ph{flex:1;min-width:120px;border:1px solid var(--border);border-radius:8px;padding:8px 10px;
+      background:#0a0a0a;color:var(--muted);font-size:12px;display:flex;align-items:center;gap:8px;
+      transition:border-color .2s,color .2s}
+  .ph .n{width:20px;height:20px;border-radius:50%;border:1px solid var(--border);flex:0 0 auto;
+         display:flex;align-items:center;justify-content:center;font-size:11px}
+  .ph.active{border-color:var(--yellow);color:var(--yellow);animation:pulse 1.2s ease-in-out infinite}
+  .ph.active .n{border-color:var(--yellow);color:var(--yellow)}
+  .ph.done{border-color:var(--green-d);color:var(--green)}
+  .ph.done .n{background:var(--green-d);color:#05140a;border-color:var(--green)}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.55}}
+  .chips{display:flex;gap:6px;flex-wrap:wrap}
+  .chip{border:1px solid var(--border);border-radius:999px;padding:3px 10px;font-size:12px;
+        color:var(--fg);background:#0a0a0a;white-space:nowrap}
+  .chip.target{border-color:var(--yellow);color:var(--yellow);box-shadow:0 0 0 1px var(--yellow) inset;
+               font-weight:bold}
+  .chip.pwned{border-color:var(--green);color:var(--green);box-shadow:0 0 0 1px var(--green) inset}
+  .chip.cve{color:var(--pink);border-color:var(--pink)}
+  #portHint{font-weight:normal}
 </style>
 {% endblock %}
 {% block body %}
@@ -104,6 +133,40 @@ nesta mesma janela. <code>exit</code> encerra o shell interativo do pipeline.</p
     </div>
 
   </form>
+
+  <!-- Painel de acompanhamento ao vivo (abaixo das acoes) -->
+  <div class="monitor" id="monitor">
+    <div class="stats">
+      <div class="stat"><div class="k">Tempo decorrido</div><div class="v" id="mTime">00:00</div></div>
+      <div class="stat" id="mIdleBox"><div class="k">Desde a última saída</div><div class="v" id="mIdle">—</div></div>
+      <div class="stat"><div class="k">Requisições LLM</div><div class="v" id="mLLM">0</div></div>
+      <div class="stat"><div class="k">CVEs sugeridos</div><div class="v" id="mCve">0</div></div>
+      <div class="stat"><div class="k">Credenciais</div><div class="v" id="mCred">0</div></div>
+      <div class="stat"><div class="k">Fase atual</div><div class="v" id="mPhase" style="font-size:13px">—</div></div>
+    </div>
+
+    <div class="mon-sec">
+      <div class="glabel">Fases</div>
+      <div class="phases" id="phases">
+        <div class="ph" data-ph="1"><span class="n">1</span><span>Recon</span></div>
+        <div class="ph" data-ph="2"><span class="n">2</span><span>Análise (RAG+LLM)</span></div>
+        <div class="ph" data-ph="3"><span class="n">3</span><span>Exploração</span></div>
+        <div class="ph" data-ph="4"><span class="n">4</span><span>Pós-exploração</span></div>
+        <div class="ph" data-ph="5"><span class="n">5</span><span>Privesc</span></div>
+      </div>
+    </div>
+
+    <div class="mon-sec">
+      <div class="glabel">Portas abertas <span class="hint" id="portHint">— a porta em teste fica destacada</span></div>
+      <div class="chips" id="ports"><span class="hint">aguardando recon…</span></div>
+    </div>
+
+    <div class="mon-sec">
+      <div class="glabel">CVEs sugeridos pelo modelo</div>
+      <div class="chips" id="cves"><span class="hint">nenhum ainda</span></div>
+    </div>
+  </div>
+
   <div class="term-wrap"><div id="term"></div></div>
 </div>
 
@@ -127,8 +190,135 @@ function setStatus(state,txt){ // state: 'idle' | 'on' | 'off'
 // para contrastar com a execucao normal com RAG. Mesmo script (pipe_v4).
 document.getElementById("ragHint").textContent = "(marque p/ rodar sem RAG)";
 
+/* =========================================================================
+   MONITOR AO VIVO — parseia o stream do PTY (os mesmos marcadores que o
+   pipeline ja imprime) e atualiza contadores. Nao exige canal extra: le o
+   que ja passa pelo terminal. Serve para o usuario ver que a ferramenta esta
+   trabalhando mesmo quando o terminal fica alguns segundos sem imprimir.
+   ========================================================================= */
+const PHASE_LABELS = {1:"Recon",2:"Análise (RAG+LLM)",3:"Exploração",
+                      4:"Pós-exploração",5:"Privesc"};
+const mon = {
+  startTs:0, lastDataTs:0, tick:null,
+  llm:0, cred:0, cves:new Set(), ports:new Map(), // port -> {banner,strategy,engine,state}
+  target:null, phase:0, running:false
+};
+const $ = id => document.getElementById(id);
+const stripAnsi = s => s.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "").replace(/\x1b[\]P].*?(\x07|\x1b\\)/g,"");
+
+function fmtDur(ms){
+  const s=Math.max(0,Math.floor(ms/1000)); const m=Math.floor(s/60);
+  return (m<60? String(m).padStart(2,"0") : String(Math.floor(m/60))+":"+String(m%60).padStart(2,"0"))
+         + ":" + String(s%60).padStart(2,"0");
+}
+
+function monReset(){
+  mon.startTs=Date.now(); mon.lastDataTs=Date.now();
+  mon.llm=0; mon.cred=0; mon.cves=new Set(); mon.ports=new Map();
+  mon.target=null; mon.phase=0; mon.running=true; mon._buf="";
+  $("mTime").textContent="00:00"; $("mLLM").textContent="0";
+  $("mCve").textContent="0"; $("mCred").textContent="0";
+  $("mPhase").textContent="—"; $("mIdle").textContent="0s";
+  $("mIdleBox").className="stat";
+  $("ports").innerHTML='<span class="hint">aguardando recon…</span>';
+  $("cves").innerHTML='<span class="hint">nenhum ainda</span>';
+  document.querySelectorAll("#phases .ph").forEach(e=>e.className="ph");
+  if(mon.tick) clearInterval(mon.tick);
+  mon.tick=setInterval(monTick, 500);
+}
+function monStop(){ mon.running=false; if(mon.tick){clearInterval(mon.tick); mon.tick=null;} }
+
+function monTick(){
+  if(!mon.running) return;
+  $("mTime").textContent = fmtDur(Date.now()-mon.startTs);
+  const idle = Date.now()-mon.lastDataTs;
+  $("mIdle").textContent = Math.floor(idle/1000)+"s";
+  const box=$("mIdleBox");
+  box.className = "stat" + (idle>20000? " bad" : idle>8000? " warn" : "");
+}
+
+function setPhase(n){
+  if(n<1||n>5) return;
+  mon.phase=n;
+  $("mPhase").textContent = n+" · "+(PHASE_LABELS[n]||"");
+  document.querySelectorAll("#phases .ph").forEach(e=>{
+    const p=+e.dataset.ph;
+    e.className = "ph" + (p<n? " done" : p===n? " active" : "");
+  });
+}
+
+function renderPorts(){
+  const box=$("ports");
+  if(mon.ports.size===0){ box.innerHTML='<span class="hint">aguardando recon…</span>'; return; }
+  box.innerHTML="";
+  for(const [p,info] of mon.ports){
+    const c=document.createElement("span");
+    c.className="chip"+(info.state==="pwned"?" pwned":"")+(p===mon.target&&info.state!=="pwned"?" target":"");
+    let t="porta "+p;
+    if(info.banner) t+=" · "+info.banner.slice(0,24);
+    c.textContent=t; c.title=(info.banner||"")+(info.strategy?("\nestrategia: "+info.strategy):"")+(info.engine?("\nmotor: "+info.engine):"");
+    box.appendChild(c);
+  }
+  const hint=$("portHint");
+  if(mon.target){
+    const i=mon.ports.get(mon.target)||{};
+    hint.textContent = "— em teste: porta "+mon.target
+      + (i.strategy? " ("+i.strategy+(i.engine?(" via "+i.engine):"")+")" : "");
+  } else { hint.textContent="— a porta em teste fica destacada"; }
+}
+function renderCves(){
+  const box=$("cves");
+  if(mon.cves.size===0){ box.innerHTML='<span class="hint">nenhum ainda</span>'; return; }
+  box.innerHTML="";
+  [...mon.cves].forEach(cve=>{
+    const c=document.createElement("span"); c.className="chip cve"; c.textContent=cve;
+    box.appendChild(c);
+  });
+}
+
+function parseLine(line){
+  let m;
+  if((m=line.match(/>>>\s*\[FASE\s*(\d)\]/))){ setPhase(+m[1]); }
+  if((m=line.match(/\[\+\]\s*Porta\s*(\d+)\s*:\s*(.*)$/))){
+    const p=m[1]; if(!mon.ports.has(p)) mon.ports.set(p,{banner:(m[2]||"").trim(),state:"open"});
+    else mon.ports.get(p).banner=(m[2]||"").trim();
+    renderPorts();
+  }
+  if((m=line.match(/ALVO:\s*PORTA\s*(\d+)/))){
+    mon.target=m[1]; if(!mon.ports.has(m[1])) mon.ports.set(m[1],{state:"open"});
+    renderPorts();
+  }
+  if((m=line.match(/\[AI\]\s*Decisao:\s*([A-Z_]+)\s*\|\s*Modulo:\s*'([^']*)'/))){
+    if(mon.target&&mon.ports.has(mon.target)){
+      mon.ports.get(mon.target).strategy=m[1];
+      const em=line.match(/MOTOR:\s*(.+?)\s*$/); if(em) mon.ports.get(mon.target).engine=em[1];
+      renderPorts();
+    }
+  }
+  if(/\[LLM\]\s*->/.test(line)){ mon.llm++; $("mLLM").textContent=mon.llm; }
+  if(/\[CRED\+\]/.test(line)){ mon.cred++; $("mCred").textContent=mon.cred; }
+  const cm=line.match(/CVE-\d{4}-\d{3,7}/gi);
+  if(cm){ cm.forEach(c=>mon.cves.add(c.toUpperCase())); $("mCve").textContent=mon.cves.size; renderCves(); }
+  if(/\[\*\*\*\]|PWNED|SUCESSO ABSOLUTO|SUCESSO MANUAL/.test(line)){
+    if(mon.target&&mon.ports.has(mon.target)){ mon.ports.get(mon.target).state="pwned"; renderPorts(); }
+  }
+}
+
+function monFeed(data){
+  mon.lastDataTs=Date.now();
+  mon._buf += stripAnsi(data);
+  let idx;
+  while((idx=mon._buf.search(/\r?\n/))>=0){
+    const line=mon._buf.slice(0,idx);
+    mon._buf=mon._buf.slice(idx + (mon._buf[idx]==="\r"&&mon._buf[idx+1]==="\n"?2:1));
+    if(line.trim()) parseLine(line);
+  }
+  if(mon._buf.length>4000) mon._buf=mon._buf.slice(-2000); // nao deixa o buffer crescer
+}
+
 function start(){
   if(ws) return;
+  monReset();
   const proto = location.protocol==="https:" ? "wss":"ws";
   ws = new WebSocket(`${proto}://${location.host}/ws/run?token=${encodeURIComponent(WS_TOKEN)}`);
   ws.onopen = ()=>{
@@ -142,8 +332,8 @@ function start(){
     }));
     sendResize();
   };
-  ws.onmessage = ev => term.write(ev.data);
-  ws.onclose = ()=>{ setStatus("off","desconectado (sessao encerrada)"); ws=null; };
+  ws.onmessage = ev => { term.write(ev.data); try{ monFeed(ev.data); }catch(e){} };
+  ws.onclose = ()=>{ setStatus("off","desconectado (sessao encerrada)"); ws=null; monStop(); };
   ws.onerror = ()=>{ term.write("\r\n[ws] erro de conexao\r\n"); };
 }
 function stop(){ if(ws){ ws.close(); } }

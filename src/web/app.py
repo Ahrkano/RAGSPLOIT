@@ -81,6 +81,11 @@ app = Flask(__name__, template_folder=os.path.join(os.path.dirname(__file__), "t
 # gera uma por boot (reinicios do processo deslogam todos — aceitavel no lab).
 app.secret_key = os.getenv("WEBUI_SECRET_KEY") or secrets.token_hex(32)
 app.permanent_session_lifetime = timedelta(hours=SESSION_HOURS)
+# Recarrega templates do disco a cada request (src/ e montado como volume):
+# edicoes de UI aparecem sem rebuild/restart do container. Custo irrelevante
+# para esta ferramenta interna.
+app.config["TEMPLATES_AUTO_RELOAD"] = True
+app.jinja_env.auto_reload = True
 sock = Sock(app)
 
 # Operacoes de base de conhecimento (reset/update) podem demorar (ingestao +
