@@ -1,0 +1,145 @@
+{% extends "base.html" %}
+{% set nav = 'checklist' %}
+{% block title %}Checklist{% endblock %}
+{% block head %}
+<style>
+  .ck-actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:6px}
+  .ck-actions .spacer{flex:1 1 auto}
+  .ck-group{margin-top:18px}
+  .ck-group .glabel{color:var(--purple);font-size:12px;text-transform:uppercase;
+                    letter-spacing:1px;font-weight:bold;margin:0 0 10px}
+  .ck-row{display:flex;align-items:center;gap:12px;border:1px solid var(--border);
+          border-radius:10px;padding:10px 12px;background:var(--panel2);margin-bottom:8px}
+  .ck-run{flex:0 0 auto;min-width:230px;text-align:left}
+  .ck-run .nm{display:block;font-size:13px}
+  .ck-run .ds{display:block;color:var(--muted);font-size:11px;font-weight:normal;margin-top:2px}
+  .ck-mid{flex:1 1 auto;min-width:0}
+  .ck-dur{color:var(--muted);font-size:11px}
+  /* lampada de status (direita) */
+  .lamp{flex:0 0 auto;display:flex;align-items:center;gap:8px;min-width:120px;justify-content:flex-end}
+  .bulb{width:16px;height:16px;border-radius:50%;background:#333;border:1px solid var(--border);
+        box-shadow:none;transition:all .2s}
+  .bulb.ok{background:var(--green);border-color:var(--green);box-shadow:0 0 10px 1px var(--green)}
+  .bulb.fail{background:var(--red);border-color:var(--red);box-shadow:0 0 10px 1px var(--red)}
+  .bulb.skip{background:var(--yellow);border-color:var(--yellow);box-shadow:0 0 8px 1px var(--yellow)}
+  .bulb.run{background:var(--cyan);border-color:var(--cyan);animation:blink .8s infinite}
+  @keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
+  .lamp .lt{font-size:12px;color:var(--muted);min-width:64px;text-align:left}
+  .lamp .lt.ok{color:var(--green)} .lamp .lt.fail{color:var(--red)}
+  .lamp .lt.skip{color:var(--yellow)} .lamp .lt.run{color:var(--cyan)}
+  .ck-row.sel{border-color:var(--green)}
+  /* console de saida */
+  .ck-out{margin-top:16px}
+  #outTitle{color:var(--cyan);font-size:13px;margin-bottom:6px}
+  #outBox{background:#000;border:1px solid var(--border);border-radius:8px;padding:12px;
+          min-height:140px;max-height:360px;overflow:auto;white-space:pre-wrap;
+          font-size:12.5px;color:var(--fg);margin:0}
+  #outBox .ph{color:var(--muted)}
+  @media(max-width:680px){.ck-run{min-width:150px}.lamp{min-width:auto}}
+</style>
+{% endblock %}
+{% block body %}
+<h1>Checklist — Diagnóstico da ferramenta</h1>
+<p class="hint">Verificações de saúde dos componentes. Clique num teste à esquerda:
+a lâmpada à direita acende <b style="color:var(--green)">verde</b> (ok) ou
+<b style="color:var(--red)">vermelho</b> (falha), e o retorno completo aparece no
+console abaixo. <b>Rodar tudo</b> executa todos em sequência.</p>
+
+<div class="panel">
+  <div class="ck-actions">
+    <button type="button" id="runAll">▶ Rodar tudo</button>
+    <button type="button" class="ghost" id="clearOut">Limpar saída</button>
+    <span class="spacer"></span>
+    <span class="hint" id="summary">—</span>
+  </div>
+
+  {% for group, checks in grouped %}
+  <div class="ck-group">
+    <div class="glabel">{{ group }}</div>
+    {% for c in checks %}
+    <div class="ck-row" id="row-{{ c.id }}" data-id="{{ c.id }}">
+      <button type="button" class="ck-run" data-id="{{ c.id }}">
+        <span class="nm">{{ c.name }}</span>
+        <span class="ds">{{ c.desc }}</span>
+      </button>
+      <div class="ck-mid"><span class="ck-dur" id="dur-{{ c.id }}"></span></div>
+      <div class="lamp">
+        <span class="lt" id="lt-{{ c.id }}">não testado</span>
+        <span class="bulb" id="bulb-{{ c.id }}"></span>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% endfor %}
+
+  <div class="ck-out">
+    <div id="outTitle">Saída</div>
+    <pre id="outBox"><span class="ph">clique num teste para ver o retorno aqui…</span></pre>
+  </div>
+</div>
+
+<script>
+const IDS = [{% for group, checks in grouped %}{% for c in checks %}"{{ c.id }}",{% endfor %}{% endfor %}];
+const $ = id => document.getElementById(id);
+
+function setLamp(id, state, txt){
+  const b=$("bulb-"+id), lt=$("lt-"+id);
+  b.className="bulb"+(state?(" "+state):"");
+  lt.className="lt"+(state?(" "+state):"");
+  lt.textContent=txt;
+}
+function showOutput(id, name, res){
+  $("outTitle").textContent = "Saída — "+name
+     + (res.duration_ms!=null ? "  ("+(res.duration_ms/1000).toFixed(1)+"s)" : "");
+  const head = res.skipped ? "[OCUPADO] " : (res.ok ? "[OK] " : "[FALHA] ");
+  $("outBox").textContent = head + name + "\n" + "—".repeat(40) + "\n" + (res.output||"(sem saída)");
+}
+function nameOf(id){ return $("row-"+id).querySelector(".nm").textContent; }
+
+async function runOne(id, silent){
+  const name=nameOf(id);
+  setLamp(id, "run", "testando…");
+  $("dur-"+id).textContent="";
+  if(!silent){ $("row-"+id).classList.add("sel");
+    document.querySelectorAll(".ck-row").forEach(r=>{ if(r.id!=="row-"+id) r.classList.remove("sel"); }); }
+  try{
+    const r = await fetch("/api/check/"+encodeURIComponent(id), {method:"POST",
+                headers:{"X-Requested-With":"fetch"}});
+    if(r.status===401){ setLamp(id,"fail","sessão exp."); return {ok:false,output:"Sessão expirada; recarregue e faça login."}; }
+    const res = await r.json();
+    const state = res.skipped ? "skip" : (res.ok ? "ok" : "fail");
+    setLamp(id, state, res.skipped ? "ocupado" : (res.ok ? "sucesso" : "falha"));
+    if(res.duration_ms!=null) $("dur-"+id).textContent=(res.duration_ms/1000).toFixed(1)+"s";
+    if(!silent) showOutput(id, name, res);
+    return res;
+  }catch(e){
+    setLamp(id,"fail","erro");
+    if(!silent) showOutput(id, name, {ok:false,output:"Erro de rede: "+e});
+    return {ok:false};
+  }
+}
+
+async function runAll(){
+  $("runAll").disabled=true;
+  let ok=0, fail=0, skip=0;
+  $("outBox").textContent="Rodando todos os testes…\n";
+  for(const id of IDS){
+    const res = await runOne(id, true);
+    if(res.skipped) skip++; else if(res.ok) ok++; else fail++;
+    $("summary").textContent = `✔ ${ok}  ✘ ${fail}` + (skip?`  ⏸ ${skip}`:"");
+    $("outBox").textContent += `${res.ok?"[OK]  ":res.skipped?"[--]  ":"[FAIL]"} ${nameOf(id)}\n`;
+  }
+  $("outTitle").textContent="Saída — resumo de 'Rodar tudo'";
+  $("runAll").disabled=false;
+}
+
+document.querySelectorAll(".ck-run").forEach(btn=>{
+  btn.addEventListener("click", ()=>runOne(btn.dataset.id, false));
+});
+$("runAll").addEventListener("click", runAll);
+$("clearOut").addEventListener("click", ()=>{
+  $("outTitle").textContent="Saída";
+  $("outBox").innerHTML='<span class="ph">clique num teste para ver o retorno aqui…</span>';
+});
+</script>
+{% endblock %}

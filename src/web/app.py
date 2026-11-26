@@ -55,9 +55,11 @@ from src.pipeline_common import resolve_target, save_target, DEFAULT_TARGET  # n
 from src import cve_scheduler                   # noqa: E402
 from src import cve_sources                      # noqa: E402
 from src import wordlists                         # noqa: E402
+from src import health_checks                     # noqa: E402
 
 LOGS_DIR = "/app/data/logs"
 RAG_ADMIN = os.path.join(SRC, "rag_admin.py")
+HEALTH_CHECKS = os.path.join(SRC, "health_checks.py")
 VSTORE = os.getenv("CHROMA_PERSIST_DIR", "/app/data")
 CVE_FILE = "/app/config/ingest/kb_recent_threats.txt"
 CVE_STATE = os.path.join(LOGS_DIR, "cve_last_update.json")
@@ -283,6 +285,63 @@ def reports_page():
 @app.route("/knowledge")
 def knowledge_page():
     return render_template("knowledge.html", st=current_state())
+
+
+@app.route("/checklist")
+def checklist_page():
+    # Agrupa os checks por categoria preservando a ordem do registro.
+    groups, order = {}, []
+    for c in health_checks.CHECKS:
+        g = c.get("group", "Geral")
+        if g not in groups:
+            groups[g] = []; order.append(g)
+        groups[g].append(c)
+    grouped = [(g, groups[g]) for g in order]
+    return render_template("checklist.html", st=current_state(), grouped=grouped)
+
+
+_HC_IDS = {c["id"] for c in health_checks.CHECKS}
+
+
+def _run_hc(cid, timeout=150):
+    """Roda UM health check em subprocesso (isola ChromaDB/torch/MSF do Flask) e
+    extrai o JSON marcado com @@HC@@, ignorando banners de stdout dos componentes."""
+    try:
+        r = subprocess.run([sys.executable, HEALTH_CHECKS, cid, "--json"],
+                           cwd=BASE, env=os.environ.copy(),
+                           capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return {"id": cid, "ok": False,
+                "output": f"tempo esgotado (> {timeout}s): o componente nao respondeu.",
+                "duration_ms": timeout * 1000}
+    except Exception as e:
+        return {"id": cid, "ok": False, "output": f"falha ao executar o check: {e}",
+                "duration_ms": 0}
+    for line in reversed((r.stdout or "").splitlines()):
+        if health_checks.HC_MARK in line:
+            try:
+                return json.loads(line.split(health_checks.HC_MARK, 1)[1])
+            except Exception:
+                break
+    return {"id": cid, "ok": False,
+            "output": "sem resultado do check.\nstderr: " + (r.stderr or "")[-600:],
+            "duration_ms": 0}
+
+
+@app.route("/api/check/<cid>", methods=["POST"])
+def api_check(cid):
+    if cid not in _HC_IDS:
+        return jsonify({"error": "check desconhecido"}), 404
+    # Checks que abrem o ChromaDB nao podem rodar concorrentes a um job de
+    # RAG/ingestao (lock do banco): devolve 'ocupado' em vez de colidir.
+    if cid in health_checks.RAG_CHECKS:
+        with _JOB_LOCK:
+            busy = _JOB["running"]
+        if busy:
+            return jsonify({"id": cid, "ok": None, "skipped": True,
+                            "output": "Base de conhecimento ocupada (ingestao/reset em "
+                                      "andamento). Tente novamente ao concluir."}), 200
+    return jsonify(_run_hc(cid)), 200
 
 
 @app.route("/health")
