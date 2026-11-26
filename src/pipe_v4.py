@@ -1000,7 +1000,7 @@ If the output above already proves execution on the target, set done=true.
                         self._blocked_ports.add(port)
                         break
                     
-                    # SE FALHOU, PEDE CORRE«√O DO ERRO
+                    # SE FALHOU, PEDE CORRE√á√ÉO DO ERRO
                     if ("scramble" in _low or "invalid packet" in _low or "connection timed" in _low
                             or "wrong version number" in _low or "handshake failure" in _low
                             or "unsupported protocol" in _low or "sslv" in _low
@@ -1070,7 +1070,7 @@ If the output above already proves execution on the target, set done=true.
                                     print(f"{C_RED}[AI] Decidiu abortar as tentativas: {new_plan.get('reason')}{C_RESET}")
                                     break
                                 
-                                # ATUALIZA COM NOVA SUGEST√O
+                                # ATUALIZA COM NOVA SUGEST√ÉO
                                 nm = (new_plan.get("module_name") or "").strip()
                                 if nm:
                                     cn = nm.replace("exploit/", "").replace("auxiliary/", "").strip("/")
