@@ -69,7 +69,7 @@ def main():
                 # 'exploit/unix/ftp/vsftpd_234_backdoor' -> 'exploit', 'unix/ftp/vsftpd_234_backdoor'
                 m_type_clean, m_name_clean = fullname.split('/', 1)
                 
-                # Etapa 3: Mineração Profunda (Pega a alma do exploit)
+                # Etapa 3: MineraÃ§Ã£o Profunda (Pega a alma do exploit)
                 print("   -> Buscando detalhes (module.info)...")
                 details = client.client.call('module.info', [m_type_clean, m_name_clean])
                 
@@ -88,7 +88,7 @@ def main():
             except Exception as e:
                 print(f"   [ERRO] Falha ao pegar detalhes: {e}")
                 
-            # Limita a 2 exemplos por termo para não poluir o teste
+            # Limita a 2 exemplos por termo para nÃ£o poluir o teste
             if count_good >= 2:
                 print("   (Limitando teste a 2 itens por termo...)")
                 break

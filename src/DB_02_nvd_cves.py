@@ -68,8 +68,8 @@ def main():
     params = {
         "pubStartDate": start_date.strftime(fmt),
         "pubEndDate": end_date.strftime(fmt),
-        "cvssV3Severity": "CRITICAL", # Filtra apenas o que È GRAVE para nao explodir o banco
-        "resultsPerPage": 40,         # Limite seguro para n„o tomar timeout sem API Key
+        "cvssV3Severity": "CRITICAL", # Filtra apenas o que √© GRAVE para nao explodir o banco
+        "resultsPerPage": 40,         # Limite seguro para n√£o tomar timeout sem API Key
         "noRejected": ""              # Ignora CVEs rejeitados/falsos
     }
     

@@ -9,7 +9,7 @@ import json
 import ipaddress
 import platform
 
-# --- IMPORTA CONFIGURAÇÕES REAIS ---
+# --- IMPORTA CONFIGURAÃ‡Ã•ES REAIS ---
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 try:

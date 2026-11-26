@@ -9,11 +9,11 @@ def clean_output(data):
     if not data: return ""
     text = str(data)
     
-    # Se tiver o link do rodapé do banner, corta tudo antes dele
+    # Se tiver o link do rodapÃ© do banner, corta tudo antes dele
     if "https://metasploit.com" in text:
         text = text.split("https://metasploit.com")[-1]
     
-    # Filtra linhas vazias e espaços laterais
+    # Filtra linhas vazias e espaÃ§os laterais
     lines = [line.strip() for line in text.split('\n') if line.strip()]
     return "\n".join(lines)
 
@@ -32,11 +32,11 @@ except Exception as e:
 # Criar console
 console = client.consoles.console()
 
-# 1. FLUSH: Lê e descarta o banner de inicialização para limpar o buffer
+# 1. FLUSH: LÃª e descarta o banner de inicializaÃ§Ã£o para limpar o buffer
 time.sleep(0.5)
 console.read()
 
-# 2. COMANDOS: Envia a sequência de teste
+# 2. COMANDOS: Envia a sequÃªncia de teste
 print("[*] Executando scanner FTP...")
 commands = [
     "use auxiliary/scanner/ftp/ftp_version",
@@ -47,7 +47,7 @@ commands = [
 for cmd in commands:
     console.write(cmd + "\n")
 
-# 3. AGUARDA: Tempo para o scan rodar (FTP é rápido, 3s sobra)
+# 3. AGUARDA: Tempo para o scan rodar (FTP Ã© rÃ¡pido, 3s sobra)
 time.sleep(3)
 
 # 4. LEITURA: Pega o resultado bruto e limpa

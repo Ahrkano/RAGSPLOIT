@@ -24,7 +24,7 @@ C_BOLD, C_CYAN, C_MAGENTA = "\033[1m", "\033[96m", "\033[95m"
 
 # --- CONFIG ---
 TARGET_IP = "192.168.70.30" 
-ATTACKER_IP = "192.168.70.20" # Adicionado para a LLM saber quem ela é
+ATTACKER_IP = "192.168.70.20" # Adicionado para a LLM saber quem ela Ã©
 LOOT_DIR = "/app/data/logs"
 WORDLIST_PATH = "/app/data/credentials.txt"
 API_KEY_PATH = "/app/config/api_key.txt"
@@ -323,7 +323,7 @@ class PentestPipeline(PipelineBase):
             module = plan.get('module', '').strip()
             if not module: module = plan.get('module_name', '').strip()
             
-            # --- NOVO: Capturando as opções dinâmicas da LLM ---
+            # --- NOVO: Capturando as opÃ§Ãµes dinÃ¢micas da LLM ---
             llm_options = plan.get('options', {})
             
             if resp: print(f"{C_BLUE}[AI] Decisao: {strategy.upper()} | Modulo: '{module}'{C_RESET}")
@@ -353,7 +353,7 @@ class PentestPipeline(PipelineBase):
             if '/' in module: m_type, m_name = module.split('/', 1)
             else: m_type = "auxiliary"; m_name = module
 
-            # --- NOVO: Mesclando opções estáticas obrigatórias com as opções da IA ---
+            # --- NOVO: Mesclando opÃ§Ãµes estÃ¡ticas obrigatÃ³rias com as opÃ§Ãµes da IA ---
             opts = {"RHOSTS": TARGET_IP, "RPORT": int(port)}
             opts.update(llm_options) # A IA injeta LHOST, LPORT, etc aqui!
             
@@ -366,7 +366,7 @@ class PentestPipeline(PipelineBase):
                     continue
                 print(f"{C_YELLOW}[*] Brute Force em {module}...{C_RESET}")
                 
-                # Forçamos essas opções localmente apenas para evitar travamentos no brute force
+                # ForÃ§amos essas opÃ§Ãµes localmente apenas para evitar travamentos no brute force
                 opts["STOP_ON_SUCCESS"] = "true"
                 opts["BLANK_PASSWORDS"] = "false"
                 opts["USER_AS_PASS"] = "false"

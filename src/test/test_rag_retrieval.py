@@ -64,7 +64,7 @@ def main():
 
     except Exception as e:
         print(f"[ERRO DE COMPATIBILIDADE] Falha ao recuperar dados: {e}")
-        # Isso ajuda a identificar erros de vers„o do Pydantic ou LangChain
+        # Isso ajuda a identificar erros de vers√£o do Pydantic ou LangChain
         import traceback
         traceback.print_exc()
 

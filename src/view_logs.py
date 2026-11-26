@@ -57,20 +57,20 @@ def display_log(filepath):
             
         clear_screen()
         
-        # --- CORRE«√O VISUAL: Ajuste din‚mico da largura da caixa ---
+        # --- CORRE√á√ÉO VISUAL: Ajuste din√¢mico da largura da caixa ---
         filename = os.path.basename(filepath)
-        # Calcula a largura necess·ria: Texto + 2 espaÁos de padding + prefixo "LENDO ARQUIVO: "
+        # Calcula a largura necess√°ria: Texto + 2 espa√ßos de padding + prefixo "LENDO ARQUIVO: "
         text_len = len(filename) + len(" LENDO ARQUIVO: ")
-        box_width = text_len + 1 # +1 para as bordas verticais e um espaÁo extra de cada lado
+        box_width = text_len + 1 # +1 para as bordas verticais e um espa√ßo extra de cada lado
 
-        # Garante uma largura mÌnima para n„o ficar muito apertado
+        # Garante uma largura m√≠nima para n√£o ficar muito apertado
         if box_width < 40:
             box_width = 40
         
         h_line = H * (box_width - 2)
         padding = (box_width - 2 - text_len) // 2
         
-        # Header do arquivo com largura din‚mica
+        # Header do arquivo com largura din√¢mica
         print(f"{C_GREEN}{TL}{h_line}{TR}{C_RESET}")
         print(f"{C_GREEN}{V}{' ' * padding}{C_YELLOW}LENDO ARQUIVO: {C_WHITE}{filename}{C_GREEN}{' ' * padding}{V}{C_RESET}")
         print(f"{C_GREEN}{BL}{h_line}{BR}{C_RESET}\n")

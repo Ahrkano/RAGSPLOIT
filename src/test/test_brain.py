@@ -19,7 +19,7 @@ def main():
         print(f"[ERRO DE INIT] {e}")
         return
 
-    # 2. Define o Cen·rio
+    # 2. Define o Cen√°rio
     target_service = "vsftpd 2.3.4"
     question = f"Eu encontrei o servico {target_service} rodando na porta 21. Qual o melhor exploit e como configuro?"
 

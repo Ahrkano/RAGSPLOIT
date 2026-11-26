@@ -136,12 +136,12 @@ def run_benchmark():
                 module_chosen = "ERROR_JSON"
                 options_chosen = {}
 
-            # AvaliaÁ„o de Precis„o FlexÌvel
+            # Avalia√ß√£o de Precis√£o Flex√≠vel
             rag_obedience = EXPECTED_MODULE in module_chosen
 
             exploit_success = False
             
-            # FILTRO DE EXECU«√O 
+            # FILTRO DE EXECU√á√ÉO 
             if syntax_valid and module_chosen != "ERROR_JSON" and ("exploit" in module_chosen or "auxiliary" in module_chosen):
                 print(f"[-] Disparando: {module_chosen}")
                 options_chosen["RHOSTS"] = TARGET_IP
@@ -180,7 +180,7 @@ def run_benchmark():
                 "Exploit_Success": False
             })
 
-    # --- SALVAR RELAT”RIO ---
+    # --- SALVAR RELAT√ìRIO ---
     now = datetime.datetime.now()
     filename = f"benchmark_llms_{now.strftime('%Y-%m-%d_%H-%M-%S')}.csv"
     csv_file = os.path.join(LOOT_DIR, filename)

@@ -69,9 +69,9 @@ class RagEngine:
         self.persist_directory = os.path.join(settings.VECTORSTORE_PATH, "chromadb")
         os.makedirs(self.persist_directory, exist_ok=True)
 
-        # --- A CURA DA PERSISTÊNCIA ---
-        # Inicializa o Banco Vetorial SEM o client_settings efêmero.
-        # Isso força o LangChain a usar o PersistentClient no disco físico.
+        # --- A CURA DA PERSISTÃŠNCIA ---
+        # Inicializa o Banco Vetorial SEM o client_settings efÃªmero.
+        # Isso forÃ§a o LangChain a usar o PersistentClient no disco fÃ­sico.
         self.vectordb = Chroma(
             persist_directory=self.persist_directory,
             embedding_function=self.embedding,

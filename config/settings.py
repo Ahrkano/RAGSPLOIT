@@ -1,10 +1,10 @@
 import os
 import torch
 
-# DetecÁ„o de Hardware para AceleraÁ„o
+# Detec√ß√£o de Hardware para Acelera√ß√£o
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
-# --- Caminhos de DiretÛrios ---
+# --- Caminhos de Diret√≥rios ---
 # Base: /app
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -16,9 +16,9 @@ DATA_PATH = os.path.join(BASE_DIR, "config", "ingest")
 # Mapeado no docker-compose como ./data/vectorstore
 VECTORSTORE_PATH = os.getenv("CHROMA_PERSIST_DIR", os.path.join(BASE_DIR, "data", "vectorstore"))
 
-# --- ConfiguraÁıes do Modelo de Embeddings (LOCAL) ---
-# Usamos HuggingFace local para n„o depender de API externa para vetorizaÁ„o
+# --- Configura√ß√µes do Modelo de Embeddings (LOCAL) ---
+# Usamos HuggingFace local para n√£o depender de API externa para vetoriza√ß√£o
 EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 
-# URL do Proxy de LLM (usado na fase de ataque, n„o na ingest„o)
+# URL do Proxy de LLM (usado na fase de ataque, n√£o na ingest√£o)
 LAB_LLM_URL = os.getenv("LAB_LLM_URL", "http://localhost:8080")
