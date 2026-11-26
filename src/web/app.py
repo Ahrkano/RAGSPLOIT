@@ -299,6 +299,49 @@ def api_ablation_results():
     return jsonify({"results": scenarios.list_ablation_results()}), 200
 
 
+SCENARIO_CARDS = os.path.join(SRC, "scenario_cards.py")
+
+
+def _run_sc(args, timeout=180):
+    """Roda src/scenario_cards.py em subprocesso e extrai o JSON marcado @@SC@@."""
+    try:
+        r = subprocess.run([sys.executable, SCENARIO_CARDS] + args + ["--json"],
+                           cwd=BASE, env=os.environ.copy(),
+                           capture_output=True, text=True, timeout=timeout)
+    except Exception as e:
+        return {"error": str(e)}
+    for line in reversed((r.stdout or "").splitlines()):
+        if "@@SC@@" in line:
+            try:
+                return json.loads(line.split("@@SC@@", 1)[1])
+            except Exception:
+                break
+    return {"error": "sem resultado", "stderr": (r.stderr or "")[-400:]}
+
+
+@app.route("/api/scenario/cards")
+def api_scenario_cards():
+    # abre o ChromaDB: nao roda concorrente a um job de RAG/ingestao
+    with _JOB_LOCK:
+        if _JOB["running"]:
+            return jsonify({"busy": True}), 200
+    return jsonify(_run_sc(["status"])), 200
+
+
+@app.route("/api/scenario/cards", methods=["POST"])
+def api_scenario_cards_act():
+    data = request.get_json(silent=True) or {}
+    action = data.get("action")
+    if action not in ("provision", "remove"):
+        return jsonify({"error": "acao invalida"}), 400
+    with _JOB_LOCK:
+        if _JOB["running"]:
+            return jsonify({"busy": True,
+                            "error": "base de conhecimento ocupada; tente depois"}), 409
+    ids = [str(i) for i in (data.get("ids") or []) if isinstance(i, (str, int))]
+    return jsonify(_run_sc([action] + ids)), 200
+
+
 @app.route("/checklist")
 def checklist_page():
     # Agrupa os checks por categoria preservando a ordem do registro.

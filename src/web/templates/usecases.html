@@ -101,6 +101,18 @@ usam o mesmo motor (engine) compartilhado; a <b>Ablação</b> roda o benchmark e
 
 <div class="panel">
   <div class="uc-actions" style="margin-top:0">
+    <b style="color:var(--purple)">Intel forjada (RAG) para os experimentos</b>
+    <span class="spacer"></span>
+    <button type="button" class="ghost" id="reloadCards">Atualizar</button>
+  </div>
+  <p class="hint">UC2 e UC3 precisam de um documento plantado no RAG antes de rodar
+    (Smart-Test v0.8 na porta 139; política de priorização de alvos). Provisione antes
+    do braço <b>com RAG</b> e remova depois para não poluir o conhecimento.</p>
+  <div id="scCards"><span class="hint">carregando…</span></div>
+</div>
+
+<div class="panel">
+  <div class="uc-actions" style="margin-top:0">
     <b style="color:var(--purple)">Resultados da Ablação (CSV)</b>
     <span class="spacer"></span>
     <button type="button" class="ghost" id="reloadAbl">Atualizar</button>
@@ -196,5 +208,47 @@ async function loadAblation(){
 }
 document.getElementById("reloadAbl").addEventListener("click", loadAblation);
 loadAblation();
+
+// --- Intel forjada (cards de cenario no RAG) ---
+async function loadCards(){
+  const box=document.getElementById("scCards");
+  box.innerHTML='<span class="hint">carregando…</span>';
+  try{
+    const r=await fetch("/api/scenario/cards");
+    const j=await r.json();
+    if(j.busy){ box.innerHTML='<span class="hint">base de conhecimento ocupada (job em andamento).</span>'; return; }
+    if(!j.cards){ box.innerHTML='<span class="hint">erro: '+(j.error||'sem dados')+'</span>'; return; }
+    box.innerHTML="";
+    for(const c of j.cards){
+      const row=document.createElement("div"); row.className="ck-row";
+      row.style.cssText="display:flex;align-items:center;gap:12px;border:1px solid var(--border);"+
+                        "border-radius:10px;padding:10px 12px;background:var(--panel2);margin-bottom:8px";
+      row.innerHTML=
+        `<span class="bulb ${c.present?'ok':''}" style="width:14px;height:14px;border-radius:50%;`+
+        `background:${c.present?'var(--green)':'#333'};border:1px solid var(--border);flex:0 0 auto"></span>`+
+        `<div style="flex:1 1 auto"><b style="font-size:13px">${c.name}</b>`+
+        `<div class="hint">${c.present?'provisionada':'ausente'} · usada no caso <code>${c.used_by}</code></div></div>`+
+        `<button type="button" class="btn-prov" data-id="${c.id}">Provisionar</button>`+
+        `<button type="button" class="ghost btn-rem" data-id="${c.id}">Remover</button>`;
+      box.appendChild(row);
+    }
+    box.querySelectorAll(".btn-prov").forEach(b=>b.addEventListener("click",()=>actCard("provision",b.dataset.id)));
+    box.querySelectorAll(".btn-rem").forEach(b=>b.addEventListener("click",()=>actCard("remove",b.dataset.id)));
+  }catch(e){ box.innerHTML='<span class="hint">erro ao carregar: '+e+'</span>'; }
+}
+async function actCard(action, id){
+  const box=document.getElementById("scCards");
+  box.style.opacity=".5";
+  try{
+    const r=await fetch("/api/scenario/cards",{method:"POST",
+       headers:{"Content-Type":"application/json"}, body:JSON.stringify({action, ids:[id]})});
+    const j=await r.json();
+    if(j.busy){ alert("Base de conhecimento ocupada; tente depois."); }
+  }catch(e){}
+  box.style.opacity="1";
+  loadCards();
+}
+document.getElementById("reloadCards").addEventListener("click", loadCards);
+loadCards();
 </script>
 {% endblock %}
