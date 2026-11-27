@@ -950,6 +950,9 @@ def ws_run(ws):
                 extra += ["--port", str(pnum)]
         except (TypeError, ValueError):
             pass
+    obj = cfg.get("objective")
+    if obj in ("coverage-map", "coverage-exploit"):
+        extra += ["--objective", obj]
 
     argv = [sys.executable, os.path.join(SRC, pipeline), "--target", target] + extra
     banner = (f"\r\n\033[92m>>> RAGSPLOIT :: {pipeline} --target {target} "

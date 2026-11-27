@@ -51,12 +51,21 @@ os.makedirs(LOOT_DIR, exist_ok=True)
 
 class AttackEngine(PipelineBase):
     def __init__(self, attacker_ip, use_rag=True, allow_brute=True,
-                 resume=False, explain=False):
+                 resume=False, explain=False, objective="foothold"):
         self.attacker_ip = attacker_ip
         self.use_rag = use_rag
         self.allow_brute = allow_brute
         self.resume = resume
         self.explain = explain
+        # OBJETIVO da run autonoma (sem escolha manual de porta):
+        #   foothold         - MODO 1 (default): para no PRIMEIRO acesso.
+        #   coverage_map     - MODO 2a: varre TODOS os servicos e mapeia as CVEs
+        #                      candidatas por servico (IA+RAG), SEM explorar.
+        #   coverage_exploit - MODO 2b: tenta explorar CADA servico (nao para no
+        #                      primeiro acesso).
+        self.objective = objective if objective in (
+            "foothold", "coverage_map", "coverage_exploit") else "foothold"
+        self.coverage = {}  # por porta: {service, candidates[], ...} (modo cobertura)
         # target_ip/only_port sao definidos pela subclasse ANTES do super().__init__
         if not hasattr(self, "target_ip"):
             self.target_ip = None
@@ -68,6 +77,10 @@ class AttackEngine(PipelineBase):
         print(f"[*] Logs serao salvos em: {LOOT_DIR}")
         print(f"[*] Modo RAG: {'HABILITADO' if self.use_rag else 'DESATIVADO (LLM pura / baseline)'}")
         print(f"[*] Brute force: {'HABILITADO' if self.allow_brute else 'DESATIVADO (so exploits)'}")
+        _obj_txt = {"foothold": "FOOTHOLD (para no 1o acesso)",
+                    "coverage_map": "COBERTURA/MAPA DE CVEs (todos os servicos, sem exploit)",
+                    "coverage_exploit": "COBERTURA/EXPLOIT (explora todos os servicos)"}
+        print(f"[*] Objetivo: {_obj_txt.get(self.objective, self.objective)}")
 
         self.setup_api_key()
 
@@ -409,12 +422,22 @@ class AttackEngine(PipelineBase):
             kb_line = ("KB SNAPSHOT: modelo=%s | vetores=%s | fontes=%s | sha256=%s" % (
                 kb.get("embedding_model"), kb.get("vector_count"),
                 kb.get("sources_files"), kb.get("sources_sha256")))
+        if self.objective == "coverage_map":
+            status = "ASSESSMENT (mapa de CVEs por servico)"
+        elif self.session_id or self.manual_access:
+            status = "PWNED"
+        else:
+            status = "FALHA"
+        cov_lines = self.render_coverage()
+        for _cl in cov_lines:
+            print(f"{C_CYAN}{_cl}{C_RESET}")
         lines = [
             "="*50, "RELATORIO FINAL", "="*50,
-            f"DATA: {now}", f"STATUS: {'PWNED' if (self.session_id or self.manual_access) else 'FALHA'}", "-"*50,
+            f"DATA: {now}", f"STATUS: {status}",
+            f"OBJETIVO: {self.objective}", "-"*50,
             f"PORTAS: {list(self.open_ports.keys())}",
             kb_line,
-        ] + eng_lines + ["\n[HISTORICO]"] + [f"- {h}" for h in self.history]
+        ] + eng_lines + cov_lines + ["\n[HISTORICO]"] + [f"- {h}" for h in self.history]
 
         ev = getattr(self, 'evidence', {}) or {}
         loot = ev.get("loot")
@@ -789,6 +812,95 @@ If the output above already proves execution on the target, set done=true.
         return False
 
 
+    def map_cves(self, port, banner, rag_context="", web_context=""):
+        """MODO 2a (coverage_map): mapeia, SEM explorar, as CVEs/vulnerabilidades
+        candidatas para o servico desta porta (IA + RAG + base de CVEs). Grava em
+        self.coverage[port] p/ a secao COBERTURA POR SERVICO do relatorio."""
+        print(f"\n{C_MAGENTA}>>> [COBERTURA] Mapeando CVEs da porta {port} ({banner}){C_RESET}")
+        cve_ctx = ""
+        if self.use_rag and self.rag:
+            try:
+                svc = self.services.get(port, {}) if hasattr(self, "services") else {}
+                terms = ("%s %s" % (svc.get("product", ""), svc.get("version", ""))).strip() or banner
+                docs = self.rag.query(f"CVE vulnerabilities and exploits for {terms} port {port}", k=6)
+                cve_ctx = "\n\n".join(d.page_content for d in docs[:6])
+            except Exception:
+                pass
+        prompt = f"""
+YOU ARE A VULNERABILITY ASSESSMENT ANALYST (CONTROLLED LAB). Do NOT exploit —
+only MAP candidate vulnerabilities for ONE service.
+TARGET {self.target_ip}:{port}
+SERVICE BANNER: "{banner}"
+OS (recon): {getattr(self, 'os_hint', 'unknown')}
+
+KNOWLEDGE BASE (RAG + recent CVEs):
+{rag_context}
+{cve_ctx}
+
+WEB ENUMERATION (if any):
+{web_context}
+
+List the MOST LIKELY CVEs / known vulnerabilities affecting THIS service, based
+strictly on the banner/version and the knowledge base. For each, give the
+Metasploit module that applies (if any) and a one-line reason. Be precise; do NOT
+invent CVEs you are not reasonably confident about.
+
+Return JSON ONLY:
+{{"service":"<product/version you inferred>",
+  "candidates":[{{"cve":"CVE-YYYY-NNNN","severity":"high|medium|low|unknown",
+                  "module":"metasploit/module/or/empty","why":"short reason"}}],
+  "note":"overall assessment"}}
+"""
+        resp = self.ask_llm_robust(prompt, expect_json=True)
+        obj = llm_schema.loads(resp) or {}
+        if not isinstance(obj, dict):
+            obj = {}
+        clean = []
+        for c in (obj.get("candidates") or []):
+            if not isinstance(c, dict):
+                continue
+            clean.append({"cve": str(c.get("cve", "")).strip(),
+                          "severity": str(c.get("severity", "unknown")).strip().lower(),
+                          "module": str(c.get("module", "") or "").strip(),
+                          "why": str(c.get("why", "")).strip()[:200]})
+        rec = {"service": (obj.get("service") or banner),
+               "candidates": clean[:12], "note": str(obj.get("note", "")).strip()}
+        self.coverage[str(port)] = rec
+        self.record_engine(port, "ASSESSMENT (mapa de CVEs)", strategy="coverage_map",
+                           detail="%d CVE(s) candidata(s)" % len(clean),
+                           outcome="mapeado (sem exploracao)")
+        _cve_line = ", ".join(c["cve"] for c in clean if c["cve"]) or "(nenhuma CVE candidata)"
+        print(f"{C_CYAN}[COBERTURA] Porta {port}: {_cve_line}{C_RESET}")
+        if rec["note"]:
+            print(f"{C_CYAN}[COBERTURA] {rec['note']}{C_RESET}")
+        try:
+            self.add_explain_step(port, banner, "coverage_map", "ASSESSMENT (mapa de CVEs)",
+                                  "N/A", rec["note"] or _cve_line, rag_context)
+            self.update_explain_outcome(port, "mapeado: " + _cve_line)
+        except Exception:
+            pass
+        return rec
+
+    def render_coverage(self):
+        """Linhas da secao COBERTURA POR SERVICO (modo cobertura)."""
+        cov = getattr(self, "coverage", None) or {}
+        if not cov:
+            return []
+        out = ["", "[COBERTURA POR SERVICO - CVEs CANDIDATAS (modo assessment)]"]
+        for p in sorted(cov, key=lambda x: int(x) if str(x).isdigit() else 0):
+            rec = cov[p]
+            out.append("  - porta %s (%s):" % (p, rec.get("service", "?")))
+            cands = rec.get("candidates") or []
+            if not cands:
+                out.append("      (nenhuma CVE candidata)")
+            for c in cands:
+                mod = (" | %s" % c["module"]) if c.get("module") else ""
+                out.append("      * %s [%s]%s - %s" % (
+                    c.get("cve", "?"), c.get("severity", "?"), mod, c.get("why", "")))
+            if rec.get("note"):
+                out.append("      nota: %s" % rec["note"])
+        return out
+
     def attack_target(self):
         """Ataca um alvo JA reconhecido (self.services/open_ports/os_hint prontos):
         loop FASE 2->3, pos-exploracao, privesc, relatorio e narrativa. Corpo do
@@ -888,6 +1000,14 @@ If the output above already proves execution on the target, set done=true.
                     print(f"{C_MAGENTA}{rag_context}{C_RESET}")
                     print(f"{C_MAGENTA}======================================{C_RESET}\n")
                 except: pass
+
+            # MODO 2a (coverage_map): NAO explora; mapeia as CVEs candidatas deste
+            # servico e segue para a proxima porta (sem break, cobre todas).
+            if self.objective == "coverage_map":
+                self.map_cves(port, banner, rag_context, web_context)
+                self.state.set_port(port, "mapped", tried=tried)
+                self._checkpoint()
+                continue
 
             prompt = f"""
             YOU ARE ACTING AS A SENIOR PENETRATION TESTER AND RED TEAM ANALYST.
@@ -1054,7 +1174,8 @@ If the output above already proves execution on the target, set done=true.
                     self.update_explain_outcome(port, "falhou (TIER C sem prova de execucao)")
                     self.state.set_port(port, "failed", tried=tried + ["manual"], exhausted=True)
                 self._checkpoint()
-                if self.session_id or self.manual_access:
+                # so PARA no 1o acesso no modo foothold; em cobertura, segue.
+                if (self.session_id or self.manual_access) and self.objective == "foothold":
                     break
                 continue
             if strategy == llm_schema.Strategy.SKIP or not module:
@@ -1335,9 +1456,13 @@ If the output above already proves execution on the target, set done=true.
                     self.update_explain_outcome(port, "falhou (estrategias esgotadas)")
                     self.state.set_port(port, "failed", tried=tried + [strategy], exhausted=True)
             self._checkpoint()
-            if _access:
-                print(f"{C_GREEN}[!] Acesso obtido. Parando scan.{C_RESET}")
+            # MODO 1 (foothold): para no 1o acesso. MODO 2b (coverage_exploit):
+            # NAO para — continua atacando os demais servicos.
+            if _access and self.objective == "foothold":
+                print(f"{C_GREEN}[!] Acesso obtido. Parando scan (objetivo: foothold).{C_RESET}")
                 break
+            if _access:
+                print(f"{C_GREEN}[!] Acesso na porta {port}; cobertura continua nos demais servicos.{C_RESET}")
 
         if self.session_id:
             self.phase_4_post_exploitation()

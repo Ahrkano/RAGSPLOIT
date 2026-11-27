@@ -22,13 +22,13 @@ from src import recon
 
 class SingleTargetPipeline(AttackEngine):
     def __init__(self, target_ip, attacker_ip, use_rag=True, only_port=None,
-                 allow_brute=True, resume=False, explain=False):
+                 allow_brute=True, resume=False, explain=False, objective="foothold"):
         self.target_ip = target_ip
         self.only_port = str(only_port) if only_port else None
         print("=== PIPELINE ALVO UNICO (SINGLE TARGET DIRECT) ===")
         print(f"[*] Alvo Definido: {target_ip}")
         super().__init__(attacker_ip, use_rag=use_rag, allow_brute=allow_brute,
-                         resume=resume, explain=explain)
+                         resume=resume, explain=explain, objective=objective)
 
     def run(self):
         self.cleanup_sessions()
@@ -98,6 +98,10 @@ if __name__ == "__main__":
     parser.add_argument("--no-brute", action="store_true", help="Remove a estrategia brute_force: forca o modelo a usar so exploits.")
     parser.add_argument("--resume", action="store_true", help="Retoma uma run interrompida deste alvo (pula recon e portas ja resolvidas).")
     parser.add_argument("--explain", action="store_true", help="Modo didatico: imprime a narrativa (porque de cada decisao) alem de salva-la em .md.")
+    parser.add_argument("--objective", choices=["foothold", "coverage-map", "coverage-exploit"],
+                        default="foothold",
+                        help="foothold (padrao: para no 1o acesso) | coverage-map (mapeia CVEs de "
+                             "TODOS os servicos, sem explorar) | coverage-exploit (explora todos os servicos).")
     args = parser.parse_args()
 
     target = resolve_target(args.target)
@@ -107,7 +111,8 @@ if __name__ == "__main__":
 
     p = PentestPipeline(target_ip=target, attacker_ip=lhost, use_rag=not args.disable_rag,
                         only_port=args.port, allow_brute=not args.no_brute,
-                        resume=args.resume, explain=args.explain)
+                        resume=args.resume, explain=args.explain,
+                        objective=args.objective.replace("-", "_"))
     try:
         p.run()
         if p.session_id:

@@ -69,6 +69,17 @@ nesta mesma janela. <code>exit</code> encerra o shell interativo do pipeline.</p
     </div>
 
     <div class="group">
+      <div class="glabel">Objetivo</div>
+      <div class="field">
+        <select id="objective">
+          <option value="foothold">Foothold — para no 1º acesso (padrão)</option>
+          <option value="coverage-map">Cobertura: mapa de CVEs — todos os serviços, sem exploit</option>
+          <option value="coverage-exploit">Cobertura: explorar todos os serviços</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="group">
       <div class="glabel">Opções de execução</div>
       <div class="opts">
         <label class="opt" id="ragToggle">
@@ -136,7 +147,8 @@ function start(){
       target: document.getElementById("target").value.trim(),
       disable_rag: document.getElementById("disableRag").checked,
       no_brute: document.getElementById("noBrute").checked,
-      port: document.getElementById("port").value.trim()
+      port: document.getElementById("port").value.trim(),
+      objective: document.getElementById("objective").value
     }));
     sendResize();
   };

@@ -32,13 +32,13 @@ from src.run_state import RunState
 
 class MultiTargetPipeline(AttackEngine):
     def __init__(self, network_cidr, attacker_ip, use_rag=True, allow_brute=True,
-                 test_mode=False, resume=False, explain=False):
+                 test_mode=False, resume=False, explain=False, objective="foothold"):
         self.network_cidr = network_cidr
         self.test_mode = test_mode
         print("=== PIPELINE MULTI-ALVO (HUNTER - CIDR) ===")
         print(f"[*] Rede Alvo CIDR: {network_cidr}  ({'TESTE RAPIDO' if test_mode else 'FULL'})")
         super().__init__(attacker_ip, use_rag=use_rag, allow_brute=allow_brute,
-                         resume=resume, explain=explain)
+                         resume=resume, explain=explain, objective=objective)
 
     # --- DESCOBERTA (exclusivo do multi-alvo; nomes _sweep_* p/ nao colidir
     #     com os helpers single-target do engine) ---
@@ -242,13 +242,18 @@ if __name__ == "__main__":
     parser.add_argument("--disable-rag", action="store_true", help="Desativa o RAG (baseline)")
     parser.add_argument("--no-brute", action="store_true", help="Sem brute force")
     parser.add_argument("--explain", action="store_true", help="Modo didatico (narrativa .md)")
+    parser.add_argument("--objective", choices=["foothold", "coverage-map", "coverage-exploit"],
+                        default="foothold",
+                        help="foothold | coverage-map (mapa de CVEs do alvo, sem explorar) | "
+                             "coverage-exploit (explora todos os servicos do alvo).")
     args = parser.parse_args()
 
     attacker_ip = args.lhost or get_best_route_ip(args.network) or os.getenv("MSF_RPC_HOST", "192.168.70.20")
 
     p = MultiTargetPipeline(network_cidr=args.network, attacker_ip=attacker_ip,
                             use_rag=not args.disable_rag, allow_brute=not args.no_brute,
-                            test_mode=args.test, explain=args.explain)
+                            test_mode=args.test, explain=args.explain,
+                            objective=args.objective.replace("-", "_"))
     try:
         p.run()
         if p.session_id:

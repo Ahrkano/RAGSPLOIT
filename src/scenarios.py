@@ -33,6 +33,10 @@ SCENARIOS = [
             {"name": "target", "label": "Alvo (IP)", "type": "text", "default": "",
              "placeholder": "vazio = usa config/target.json"},
             {"name": "port", "label": "Porta (vazio = todas)", "type": "number", "default": ""},
+            {"name": "objective", "label": "Objetivo", "type": "select", "default": "foothold",
+             "options": [{"value": "foothold", "label": "Foothold (para no 1º acesso)"},
+                         {"value": "coverage-map", "label": "Cobertura: mapa de CVEs (todos os serviços, sem exploit)"},
+                         {"value": "coverage-exploit", "label": "Cobertura: explorar todos os serviços"}]},
             {"name": "disable_rag", "label": "Desativar RAG (baseline)", "type": "checkbox", "default": False},
             {"name": "no_brute", "label": "Sem brute force", "type": "checkbox", "default": False},
             {"name": "explain", "label": "Modo explain (narrativa)", "type": "checkbox", "default": True},
@@ -72,6 +76,10 @@ SCENARIOS = [
         "fields": [
             {"name": "network", "label": "Rede (CIDR)", "type": "text", "default": "192.168.70.0/24"},
             {"name": "test_mode", "label": "Modo teste rápido (5 IPs)", "type": "checkbox", "default": True},
+            {"name": "objective", "label": "Objetivo (no alvo escolhido)", "type": "select", "default": "foothold",
+             "options": [{"value": "foothold", "label": "Foothold (para no 1º acesso)"},
+                         {"value": "coverage-map", "label": "Cobertura: mapa de CVEs (sem exploit)"},
+                         {"value": "coverage-exploit", "label": "Cobertura: explorar todos os serviços"}]},
             {"name": "disable_rag", "label": "Desativar RAG", "type": "checkbox", "default": False},
             {"name": "no_brute", "label": "Sem brute force", "type": "checkbox", "default": False},
             {"name": "explain", "label": "Modo explain", "type": "checkbox", "default": True},
@@ -85,6 +93,10 @@ SCENARIOS = [
         "fields": [
             {"name": "target", "label": "Alvo (IP)", "type": "text", "default": "192.168.70.31"},
             {"name": "port", "label": "Porta", "type": "number", "default": "3000"},
+            {"name": "objective", "label": "Objetivo", "type": "select", "default": "foothold",
+             "options": [{"value": "foothold", "label": "Foothold (para no 1º acesso)"},
+                         {"value": "coverage-map", "label": "Cobertura: mapa de CVEs (sem exploit)"},
+                         {"value": "coverage-exploit", "label": "Cobertura: explorar todos os serviços"}]},
             {"name": "disable_rag", "label": "Desativar RAG", "type": "checkbox", "default": False},
             {"name": "explain", "label": "Modo explain", "type": "checkbox", "default": True},
         ],
@@ -168,7 +180,13 @@ def build_command(scenario_id, params):
         if _truthy("no_brute"):    argv.append("--no-brute")
         if _truthy("explain"):     argv.append("--explain")
         if _truthy("resume"):      argv.append("--resume")
-        label = f"{sc['name']} → {target or '(target.json)'}" + (f":{port}" if port else "")
+        obj = (p.get("objective") or "foothold").strip()
+        if obj not in ("foothold", "coverage-map", "coverage-exploit"):
+            raise ScenarioError(f"objetivo inválido: {obj}")
+        if obj != "foothold":
+            argv += ["--objective", obj]
+        label = (f"{sc['name']} → {target or '(target.json)'}" + (f":{port}" if port else "")
+                 + (f" [{obj}]" if obj != "foothold" else ""))
 
     elif sc["script"] == "pipe_multi":
         net = (p.get("network") or "").strip()
@@ -179,7 +197,12 @@ def build_command(scenario_id, params):
         if _truthy("disable_rag"): argv.append("--disable-rag")
         if _truthy("no_brute"):    argv.append("--no-brute")
         if _truthy("explain"):     argv.append("--explain")
-        label = f"{sc['name']} → {net}"
+        obj = (p.get("objective") or "foothold").strip()
+        if obj not in ("foothold", "coverage-map", "coverage-exploit"):
+            raise ScenarioError(f"objetivo inválido: {obj}")
+        if obj != "foothold":
+            argv += ["--objective", obj]
+        label = f"{sc['name']} → {net}" + (f" [{obj}]" if obj != "foothold" else "")
 
     elif sc["script"] == "benchmark":
         arm = (p.get("arm") or "rag").strip()
